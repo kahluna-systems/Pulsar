@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Network Diagnostic Test Client for Windows
+    KahLuna Pulsar - Network Test Client for Windows
 .DESCRIPTION
     A lightweight, transparent network testing tool.
     Tests connectivity, latency, download and upload speeds.
@@ -43,7 +43,7 @@ function Show-Banner {
     Clear-Host
     Write-Host ""
     Write-Host ("=" * 60) -ForegroundColor Cyan
-    Write-Host "  NETWORK DIAGNOSTIC TEST CLIENT" -ForegroundColor White
+    Write-Host "  KAHLUNA PULSAR - NETWORK TEST" -ForegroundColor White
     Write-Host ("=" * 60) -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Version: $Version"
@@ -268,7 +268,7 @@ function Remove-Script {
     }
     
     Write-Host ""
-    Write-Host "Thank you for using the Network Diagnostic Tool!"
+    Write-Host "Thank you for using KahLuna Pulsar!"
     Write-Host ""
     Read-Host "Press Enter to exit"
 }

@@ -1,4 +1,4 @@
-"""Network Diagnostic Platform - Test Node Application."""
+"""KahLuna Pulsar - Network Diagnostics Node Application."""
 from fastapi import FastAPI, Depends, BackgroundTasks, Request, Response, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
@@ -35,8 +35,8 @@ from shared.utils import get_client_ip, RateLimiter
 
 # Initialize app
 app = FastAPI(
-    title="Network Diagnostic Platform - Node",
-    description="Distributed network diagnostic test node",
+    title="KahLuna Pulsar",
+    description="KahLuna Pulsar — distributed network diagnostics node",
     version="2.0.0"
 )
 
@@ -537,7 +537,7 @@ async def stream_mtr(target: str, max_hops: int = 30, protocol: str = "icmp"):
                     # Check if sudo failed
                     err_text = stderr.decode() if stderr else ""
                     if "password" in err_text.lower() or "sudo" in err_text.lower():
-                        yield f"data: {json.dumps({'error': 'mtr requires sudo. Run: echo \"bigtex ALL=(ALL) NOPASSWD: /usr/bin/mtr\" | sudo tee /etc/sudoers.d/netdiag'})}\n\n"
+                        yield f"data: {json.dumps({'error': 'mtr requires sudo. Run: echo \"bigtex ALL=(ALL) NOPASSWD: /usr/bin/mtr\" | sudo tee /etc/sudoers.d/pulsar'})}\n\n"
                         break
                     continue
 

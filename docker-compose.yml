@@ -1,10 +1,10 @@
-# Network Diagnostic Platform - Docker Compose
+# KahLuna Pulsar - Docker Compose
 # Use: docker-compose up -d
 
 version: '3.8'
 
 services:
-  # Test Node (can run standalone or with hub)
+  # Pulsar Node (can run standalone or with hub)
   node:
     build:
       context: .
@@ -13,7 +13,7 @@ services:
       - "8000:8000"
     environment:
       - NODE_ID=node-docker-01
-      - NODE_NAME=Docker Test Node
+      - NODE_NAME=Pulsar Docker Node
       - STANDALONE_MODE=true
     volumes:
       - node_data:/app/data
@@ -31,8 +31,8 @@ services:
   # postgres:
   #   image: postgres:15-alpine
   #   environment:
-  #     POSTGRES_DB: netdiag
-  #     POSTGRES_USER: netdiag
+  #     POSTGRES_DB: pulsar
+  #     POSTGRES_USER: pulsar
   #     POSTGRES_PASSWORD: changeme
   #   volumes:
   #     - postgres_data:/var/lib/postgresql/data
@@ -48,7 +48,7 @@ services:
   #   ports:
   #     - "8080:8000"
   #   environment:
-  #     - DATABASE_URL=postgresql://netdiag:changeme@postgres:5432/netdiag
+  #     - DATABASE_URL=postgresql://pulsar:changeme@postgres:5432/pulsar
   #     - JWT_SECRET=your-secret-key-change-in-production
   #   depends_on:
   #     - postgres

@@ -1,1 +1,1 @@
-# Shared utilities for Network Diagnostic Platform
+# Shared utilities for KahLuna Pulsar

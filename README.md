@@ -1,6 +1,8 @@
-# Network Diagnostic Platform
+# KahLuna Pulsar
 
-A distributed network diagnostic platform for ISP engineers to troubleshoot customer connectivity issues from strategically placed test nodes throughout the network.
+**KahLuna Pulsar** is a distributed network diagnostics suite — a deployable test point that measures connectivity, path, latency, packet loss, and throughput from wherever you stand it up (cloud, datacenter, or the network edge).
+
+Part of the **KahLuna Nexus** suite: Pulsar runs **standalone** as a dedicated probe, or **embeds** as the built-in diagnostics engine inside KahLuna WARP Gateway.
 
 ## Features
 
@@ -49,8 +51,8 @@ python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 docker-compose up -d
 
 # Or build manually
-docker build -f Dockerfile.node -t netdiag-node .
-docker run -p 8000:8000 --cap-add=NET_RAW netdiag-node
+docker build -f Dockerfile.node -t pulsar-node .
+docker run -p 8000:8000 --cap-add=NET_RAW pulsar-node
 ```
 
 ## Access
@@ -152,4 +154,4 @@ sudo apt-get install iperf3 tcpdump mtr-tiny traceroute dnsutils
 
 ## License
 
-Internal use only - Spectrum Enterprise
+Part of the KahLuna ecosystem. All rights reserved.

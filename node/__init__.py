@@ -1,1 +1,1 @@
-# Network Diagnostic Platform - Test Node
+# KahLuna Pulsar - Network Diagnostics Node

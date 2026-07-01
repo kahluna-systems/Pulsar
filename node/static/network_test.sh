@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# Network Diagnostic Test Client for macOS/Linux
-# ===============================================
+# KahLuna Pulsar - Network Test Client for macOS/Linux
+# =====================================================
 # A lightweight, transparent network testing tool.
 #
 # This script:
@@ -40,7 +40,7 @@ print_banner() {
     clear
     echo ""
     echo "============================================================"
-    echo -e "${BOLD}  NETWORK DIAGNOSTIC TEST CLIENT${NC}"
+    echo -e "${BOLD}  KAHLUNA PULSAR - NETWORK TEST${NC}"
     echo "============================================================"
     echo ""
     echo "Version: $VERSION"
@@ -276,7 +276,7 @@ cleanup() {
     fi
     
     echo ""
-    echo "Thank you for using the Network Diagnostic Tool!"
+    echo "Thank you for using KahLuna Pulsar!"
 }
 
 # Main

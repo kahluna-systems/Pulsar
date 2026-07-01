@@ -27,7 +27,7 @@ class NodeLimits(BaseModel):
 
 class NodeConfig(BaseModel):
     node_id: str = Field(default_factory=lambda: f"node-{os.urandom(4).hex()}")
-    node_name: str = "Diagnostic Node"
+    node_name: str = "Pulsar Node"
     location: Optional[str] = None
     
     # Hub connection (optional)

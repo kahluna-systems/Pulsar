@@ -1,4 +1,4 @@
-# Network Diagnostic Platform - Dependencies
+# KahLuna Pulsar - Dependencies
 
 # Web Framework
 fastapi==0.109.0

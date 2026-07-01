@@ -1,5 +1,5 @@
 #!/bin/bash
-# Network Diagnostic Platform - Server Setup
+# KahLuna Pulsar - Server Setup
 # Run with: sudo bash setup.sh
 
 set -e

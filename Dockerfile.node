@@ -1,4 +1,4 @@
-# Network Diagnostic Platform - Test Node
+# KahLuna Pulsar - Network Diagnostics Node
 FROM python:3.11-slim
 
 # Install system dependencies

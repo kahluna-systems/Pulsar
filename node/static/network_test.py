@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Network Diagnostic Test Client
-==============================
+KahLuna Pulsar - Network Test Client
+====================================
 A lightweight, transparent network testing tool.
 
 This script:
@@ -50,7 +50,7 @@ def color(text, c):
 def print_banner():
     """Display welcome banner."""
     print("\n" + "=" * 60)
-    print(color("  NETWORK DIAGNOSTIC TEST CLIENT", Colors.BOLD))
+    print(color("  KAHLUNA PULSAR - NETWORK TEST", Colors.BOLD))
     print("=" * 60)
     print(f"\nVersion: {VERSION}")
     print(f"Server:  {DEFAULT_SERVER}")
@@ -278,7 +278,7 @@ def cleanup():
     else:
         print("Script kept. You can delete it manually when done.")
     
-    print("\nThank you for using the Network Diagnostic Tool!")
+    print("\nThank you for using KahLuna Pulsar!")
 
 def main():
     """Main entry point."""
