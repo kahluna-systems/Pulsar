@@ -39,9 +39,9 @@ python -m venv venv
 source venv/bin/activate  # or venv\Scripts\activate on Windows
 pip install -r requirements.txt
 
-# Run the node
-cd node
-python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+# Run the node (from the repo root, so package imports resolve)
+export PYTHONPATH=$(pwd)   # Windows PowerShell: $env:PYTHONPATH = $PWD
+python -m uvicorn node.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### Option 2: Docker
