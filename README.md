@@ -34,7 +34,7 @@ Part of the **KahLuna Nexus** suite: Pulsar runs **standalone** as a dedicated p
 
 ```bash
 # Clone and setup
-cd network-diagnostic-platform
+cd pulsar
 python -m venv venv
 source venv/bin/activate  # or venv\Scripts\activate on Windows
 pip install -r requirements.txt
