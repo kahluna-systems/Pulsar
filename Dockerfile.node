@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dnsutils \
     iputils-ping \
     nmap \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
@@ -24,7 +25,7 @@ COPY shared/ ./shared/
 COPY node/ ./node/
 
 # Create static directory if not exists
-RUN mkdir -p /app/node/static
+RUN mkdir -p /app/node/static /app/data
 
 # Create non-root user (but keep cap_net_raw for ping/tcpdump)
 RUN useradd -m -u 1000 appuser

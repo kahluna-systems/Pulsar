@@ -1,7 +1,5 @@
 # KahLuna Pulsar - Docker Compose
-# Use: docker-compose up -d
-
-version: '3.8'
+# Use: docker compose up -d
 
 services:
   # Pulsar Node (can run standalone or with hub)
@@ -15,6 +13,10 @@ services:
       - NODE_ID=node-docker-01
       - NODE_NAME=Pulsar Docker Node
       - STANDALONE_MODE=true
+      # Keep the database and generated config on the named volume so they
+      # survive container rebuilds (and secret_key stays stable).
+      - DATABASE_PATH=/app/data/tests.db
+      - NODE_CONFIG=/app/data/node_config.json
     volumes:
       - node_data:/app/data
       - ./node/static:/app/node/static:ro
