@@ -14,12 +14,12 @@ import asyncio
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from .config import get_config, NodeConfig
-from .database import get_db, init_db, TestResult, CustomerToken
+from .database import get_db, init_db, TestResult, CustomerToken, User
 from .auth import (
     get_current_user, get_optional_user, require_role,
     create_access_token, create_refresh_token, authenticate_user,
     create_customer_token, validate_customer_token, get_customer_token_info,
-    ensure_admin_exists
+    ensure_admin_exists, create_user, user_from_token
 )
 from .runners import (
     SpeedTestRunner, TracerouteRunner, MTRRunner, DNSRunner,
@@ -103,6 +103,35 @@ async def get_me(user = Depends(get_current_user)):
         "username": user.username,
         "role": user.role
     }
+
+
+@app.get("/api/auth/status")
+async def auth_status(db: Session = Depends(get_db)):
+    """Report whether auth is enabled and whether first-run admin setup is needed."""
+    config = get_config()
+    admin = db.query(User).filter(User.role == "admin").first()
+    return {
+        "auth_required": config.require_auth,
+        "setup_required": config.require_auth and admin is None,
+    }
+
+
+@app.post("/api/auth/setup", response_model=TokenResponse)
+async def setup_admin(request: LoginRequest, db: Session = Depends(get_db)):
+    """First-run admin creation. Allowed only while no admin account exists yet."""
+    if db.query(User).filter(User.role == "admin").first() is not None:
+        raise HTTPException(status_code=403, detail="Admin already configured")
+    if not request.username or len(request.password or "") < 8:
+        raise HTTPException(
+            status_code=400,
+            detail="Username is required and password must be at least 8 characters"
+        )
+    user = create_user(db, request.username, request.password, role="admin")
+    return TokenResponse(
+        access_token=create_access_token(user.username, user.role),
+        refresh_token=create_refresh_token(user.username),
+        expires_in=3600
+    )
 
 
 # ============== Customer Token Endpoints ==============
@@ -326,7 +355,7 @@ async def create_test(
     test_request: TestRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    user = Depends(get_optional_user)
+    user = Depends(require_role("engineer"))
 ):
     """Create and run a diagnostic test."""
     config = get_config()
@@ -423,7 +452,8 @@ def execute_test(test_id: int, test_type: str, config: dict):
 async def list_tests(
     limit: int = 50,
     test_type: str = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user = Depends(require_role("engineer"))
 ):
     """List recent tests."""
     query = db.query(TestResult).order_by(TestResult.created_at.desc())
@@ -447,7 +477,8 @@ async def list_tests(
 
 
 @app.get("/api/tests/{test_id}")
-async def get_test(test_id: int, db: Session = Depends(get_db)):
+async def get_test(test_id: int, db: Session = Depends(get_db),
+                   user = Depends(require_role("engineer"))):
     """Get test details."""
     test = db.query(TestResult).filter(TestResult.id == test_id).first()
     if not test:
@@ -472,8 +503,19 @@ _active_mtr_sessions = {}  # session_id -> cancel flag
 
 
 @app.get("/api/mtr/stream")
-async def stream_mtr(target: str, max_hops: int = 30, protocol: str = "icmp"):
+async def stream_mtr(target: str, max_hops: int = 30, protocol: str = "icmp", token: str = None):
     """Stream live MTR results via SSE. Runs repeated single-cycle passes until stopped."""
+    # EventSource can't set an Authorization header, so the JWT arrives as ?token=.
+    config = get_config()
+    if config.require_auth:
+        db = next(get_db())
+        try:
+            authed = user_from_token(db, token)
+        finally:
+            db.close()
+        if authed is None or authed.role not in ("engineer", "admin"):
+            raise HTTPException(status_code=401, detail="Authentication required")
+
     if not target:
         raise HTTPException(status_code=400, detail="Target is required")
 
@@ -651,7 +693,7 @@ async def stream_mtr(target: str, max_hops: int = 30, protocol: str = "icmp"):
 
 
 @app.post("/api/mtr/stop/{session_id}")
-async def stop_mtr(session_id: str):
+async def stop_mtr(session_id: str, user = Depends(require_role("engineer"))):
     """Stop a running MTR session."""
     cancel_event = _active_mtr_sessions.get(session_id)
     if not cancel_event:
@@ -663,25 +705,25 @@ async def stop_mtr(session_id: str):
 # ============== Continuous Ping Endpoints ==============
 
 @app.post("/api/ping/start")
-async def start_ping(config: dict, user = Depends(get_optional_user)):
+async def start_ping(config: dict, user = Depends(require_role("engineer"))):
     """Start a continuous ping session."""
     return ping_runner.start(config)
 
 
 @app.get("/api/ping/{session_id}")
-async def get_ping_status(session_id: int):
+async def get_ping_status(session_id: int, user = Depends(require_role("engineer"))):
     """Get continuous ping session status."""
     return ping_runner.get_status(session_id)
 
 
 @app.post("/api/ping/{session_id}/stop")
-async def stop_ping(session_id: int):
+async def stop_ping(session_id: int, user = Depends(require_role("engineer"))):
     """Stop a continuous ping session."""
     return ping_runner.stop(session_id)
 
 
 @app.get("/api/ping")
-async def list_ping_sessions():
+async def list_ping_sessions(user = Depends(require_role("engineer"))):
     """List all ping sessions."""
     return ping_runner.get_all_sessions()
 

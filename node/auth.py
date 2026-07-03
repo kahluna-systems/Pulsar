@@ -100,6 +100,20 @@ async def get_optional_user(
     return db.query(User).filter(User.username == username).first()
 
 
+def user_from_token(db: Session, token_str: Optional[str]) -> Optional[User]:
+    """Resolve a user from a raw access-token string.
+
+    Used for SSE endpoints (EventSource can't set an Authorization header, so
+    the token arrives as a query parameter instead).
+    """
+    if not token_str:
+        return None
+    payload = decode_token(token_str)
+    if not payload or payload.get("type") != "access":
+        return None
+    return db.query(User).filter(User.username == payload.get("sub")).first()
+
+
 def require_role(required_role: str):
     """Dependency to require a specific role."""
     async def role_checker(user: User = Depends(get_current_user)):

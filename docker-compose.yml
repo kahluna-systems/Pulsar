@@ -13,6 +13,7 @@ services:
       - NODE_ID=node-docker-01
       - NODE_NAME=Pulsar Docker Node
       - STANDALONE_MODE=true
+      - REQUIRE_AUTH=true
       # Keep the database and generated config on the named volume so they
       # survive container rebuilds (and secret_key stays stable).
       - DATABASE_PATH=/app/data/tests.db

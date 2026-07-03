@@ -169,6 +169,105 @@
     </style>
 </head>
 <body>
+    <!-- First-run setup / login overlay -->
+    <div id="auth-overlay" style="display:none; position:fixed; inset:0; z-index:9999; background:linear-gradient(135deg,#4f46e5,#7c3aed); align-items:center; justify-content:center;">
+      <div style="background:#fff; padding:32px; border-radius:12px; width:340px; max-width:90vw; box-shadow:0 10px 40px rgba(0,0,0,.3);">
+        <h2 style="margin:0 0 4px;">KahLuna Pulsar</h2>
+        <p id="auth-subtitle" style="margin:0 0 20px; color:#666; font-size:14px;">Sign in</p>
+        <div id="auth-error" style="display:none; background:#f8d7da; color:#721c24; padding:10px; border-radius:6px; margin-bottom:12px; font-size:13px;"></div>
+        <label style="display:block; font-size:13px; color:#444; margin-bottom:4px;">Username</label>
+        <input id="auth-username" type="text" autocomplete="username" style="width:100%; padding:10px; margin-bottom:14px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box;">
+        <label style="display:block; font-size:13px; color:#444; margin-bottom:4px;">Password</label>
+        <input id="auth-password" type="password" autocomplete="current-password" style="width:100%; padding:10px; margin-bottom:6px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box;">
+        <p id="auth-hint" style="display:none; margin:0 0 12px; color:#888; font-size:12px;">Choose a password of at least 8 characters.</p>
+        <button id="auth-submit" style="width:100%; padding:11px; background:#4f46e5; color:#fff; border:none; border-radius:6px; font-size:15px; cursor:pointer; margin-top:8px;">Sign In</button>
+      </div>
+    </div>
+    <script>
+    (function(){
+      const KEY='pulsar_token';
+      const AUTH_PATHS=['/api/auth/login','/api/auth/setup','/api/auth/status'];
+      function token(){ return localStorage.getItem(KEY); }
+      function setToken(t){ localStorage.setItem(KEY,t); }
+      function clearToken(){ localStorage.removeItem(KEY); }
+
+      // Inject the Bearer token into same-origin /api calls (except auth bootstrap).
+      const _fetch = window.fetch.bind(window);
+      window.fetch = function(input, init){
+        init = init || {};
+        const url = typeof input === 'string' ? input : (input && input.url) || '';
+        const isApi = url.indexOf('/api/') !== -1;
+        const isBootstrap = AUTH_PATHS.some(p => url.indexOf(p) !== -1);
+        const t = token();
+        if (isApi && !isBootstrap && t){
+          const headers = new Headers(init.headers || {});
+          if(!headers.has('Authorization')) headers.set('Authorization','Bearer '+t);
+          init = Object.assign({}, init, { headers });
+        }
+        return _fetch(input, init).then(function(resp){
+          if(resp.status===401 && isApi && !isBootstrap){ clearToken(); showLogin(); }
+          return resp;
+        });
+      };
+
+      let mode='login';
+      const overlay=()=>document.getElementById('auth-overlay');
+      function showError(m){ const e=document.getElementById('auth-error'); e.textContent=m; e.style.display='block'; }
+      function clearError(){ const e=document.getElementById('auth-error'); if(e) e.style.display='none'; }
+      function open_(m){
+        mode=m;
+        overlay().style.display='flex';
+        document.getElementById('auth-subtitle').textContent = m==='setup' ? 'Create the admin account for this node' : 'Sign in to this node';
+        document.getElementById('auth-submit').textContent = m==='setup' ? 'Create Admin' : 'Sign In';
+        document.getElementById('auth-hint').style.display = m==='setup' ? 'block' : 'none';
+        clearError();
+      }
+      function showLogin(){ open_('login'); }
+      function showSetup(){ open_('setup'); }
+      function hide(){ overlay().style.display='none'; }
+
+      async function submit(){
+        clearError();
+        const u=document.getElementById('auth-username').value.trim();
+        const p=document.getElementById('auth-password').value;
+        if(!u || !p){ showError('Enter a username and password.'); return; }
+        const path = mode==='setup' ? '/api/auth/setup' : '/api/auth/login';
+        try{
+          const resp = await fetch(path, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u, password:p}) });
+          if(!resp.ok){
+            const err = await resp.json().catch(()=>({}));
+            showError(err.detail || (mode==='setup'?'Setup failed':'Invalid credentials'));
+            return;
+          }
+          setToken((await resp.json()).access_token);
+          location.reload();
+        }catch(e){ showError('Network error: '+e.message); }
+      }
+
+      async function check(){
+        let status;
+        try{ status = await (await fetch('/api/auth/status')).json(); }
+        catch(e){ return; }
+        if(!status.auth_required){ hide(); return; }
+        if(status.setup_required){ showSetup(); return; }
+        if(token()){
+          try{
+            const me = await (await fetch('/api/auth/me')).json();
+            if(me.authenticated){ hide(); const lb=document.getElementById('logout-btn'); if(lb) lb.style.display='inline-block'; return; }
+          }catch(e){}
+        }
+        showLogin();
+      }
+
+      window.pulsarAuth = { token, logout: function(){ clearToken(); location.reload(); }, showLogin, showSetup };
+      document.addEventListener('DOMContentLoaded', function(){
+        document.getElementById('auth-submit').addEventListener('click', submit);
+        document.getElementById('auth-password').addEventListener('keydown', function(e){ if(e.key==='Enter') submit(); });
+        check();
+      });
+    })();
+    </script>
+
     <div class="header">
         <div>
             <h1>KahLuna Pulsar</h1>
@@ -176,6 +275,7 @@
         </div>
         <div>
             <button class="btn btn-secondary" onclick="location.href='/speedtest'">Customer Speed Test →</button>
+            <button class="btn btn-secondary" id="logout-btn" style="display:none;" onclick="pulsarAuth.logout()">Log Out</button>
         </div>
     </div>
     
@@ -682,6 +782,8 @@
             div.innerHTML = '<div class="loading">Starting MTR...</div>';
 
             const params = new URLSearchParams({ target, max_hops: maxHops });
+            const _authTok = window.pulsarAuth && window.pulsarAuth.token();
+            if (_authTok) params.set('token', _authTok);
             mtrEventSource = new EventSource(`/api/mtr/stream?${params}`);
 
             mtrEventSource.onmessage = (event) => {
