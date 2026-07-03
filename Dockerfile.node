@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iputils-ping \
     nmap \
     curl \
+    libcap2-bin \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
@@ -32,8 +33,10 @@ RUN useradd -m -u 1000 appuser
 RUN chown -R appuser:appuser /app
 
 # Set capabilities for network tools
-RUN setcap cap_net_raw+ep /usr/bin/ping || true
-RUN setcap cap_net_raw+ep /usr/bin/traceroute || true
+RUN setcap cap_net_raw+ep "$(command -v ping)" || true; \
+    setcap cap_net_raw+ep "$(command -v traceroute)" || true; \
+    setcap cap_net_raw,cap_net_admin+ep "$(command -v tcpdump)" || true; \
+    setcap cap_net_raw+ep "$(command -v mtr-packet)" || true
 
 # Environment
 ENV PYTHONPATH=/app

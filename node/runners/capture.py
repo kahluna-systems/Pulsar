@@ -57,9 +57,12 @@ class PacketCaptureRunner:
         if filter_expr:
             cmd.append(filter_expr)
         
-        # Check if we need sudo
-        needs_sudo = os.geteuid() != 0 if hasattr(os, 'geteuid') else True
-        if needs_sudo:
+        # Prefer file capabilities (setcap on tcpdump). Only prepend sudo when it
+        # actually exists — a capability-granted container has no sudo, and blindly
+        # prepending it crashes with a misleading "tcpdump is not installed".
+        import shutil
+        needs_priv = os.geteuid() != 0 if hasattr(os, 'geteuid') else True
+        if needs_priv and shutil.which("sudo"):
             cmd = ["sudo"] + cmd
         
         try:
@@ -137,8 +140,9 @@ class PacketCaptureRunner:
                 "note": "Capture completed (duration limit reached)"
             }
             
-        except FileNotFoundError:
-            return {"error": "tcpdump is not installed"}
+        except FileNotFoundError as e:
+            missing = getattr(e, "filename", None) or "tcpdump"
+            return {"error": f"Required binary not found: {missing}"}
         except PermissionError:
             return {"error": "Permission denied. Packet capture requires root/sudo privileges."}
         except Exception as e:

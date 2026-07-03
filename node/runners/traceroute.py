@@ -54,10 +54,15 @@ class TracerouteRunner:
         else:
             cmd = self._build_unix_cmd(target, protocol, max_hops, timeout, resolve_hostnames)
         
-        # ICMP and TCP traceroute require root privileges
-        import os
-        needs_sudo = os.geteuid() != 0 if hasattr(os, 'geteuid') else False
-        if needs_sudo and protocol in ("icmp", "tcp"):
+        # ICMP and TCP traceroute need elevated privileges. Prefer file
+        # capabilities (setcap cap_net_raw on the traceroute binary); only fall
+        # back to sudo when it actually exists (bare-metal with a sudoers rule).
+        # A capability-granted container has no sudo, so run the binary directly.
+        import os, shutil
+        needs_priv = protocol in ("icmp", "tcp") and (
+            os.geteuid() != 0 if hasattr(os, 'geteuid') else False
+        )
+        if needs_priv and shutil.which("sudo"):
             cmd = ["sudo", "-n"] + cmd
         
         try:

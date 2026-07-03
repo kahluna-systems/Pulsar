@@ -21,7 +21,8 @@ services:
       - node_data:/app/data
       - ./node/static:/app/node/static:ro
     cap_add:
-      - NET_RAW  # Required for ping, traceroute, tcpdump
+      - NET_RAW    # ping, ICMP/TCP traceroute, mtr
+      - NET_ADMIN  # tcpdump promiscuous-mode capture
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/node/info"]

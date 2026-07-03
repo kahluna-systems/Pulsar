@@ -59,8 +59,16 @@ class IperfRunner:
             if result.returncode == 0:
                 return self._parse_client_result(result.stdout, config)
             else:
+                # iperf3 -J reports the real error as JSON on stdout even when it
+                # exits non-zero (e.g. "the server is busy running a test").
+                err = (result.stderr or "").strip()
+                if not err and result.stdout:
+                    try:
+                        err = json.loads(result.stdout).get("error", "")
+                    except json.JSONDecodeError:
+                        pass
                 return {
-                    "error": result.stderr or "iPerf3 failed",
+                    "error": err or "iPerf3 failed",
                     "returncode": result.returncode
                 }
                 
