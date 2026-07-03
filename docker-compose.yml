@@ -7,8 +7,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.node
-    ports:
-      - "8000:8000"
+    # Host networking so diagnostics measure from the host's real network
+    # vantage point — no docker-bridge hop in traceroute/MTR, real interfaces
+    # for packet capture, and the host's actual DNS resolver. The app binds
+    # 0.0.0.0:8000 directly on the host, so no port mapping is needed.
+    network_mode: host
     environment:
       - NODE_ID=node-docker-01
       - NODE_NAME=Pulsar Docker Node
