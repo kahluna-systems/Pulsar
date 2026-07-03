@@ -283,7 +283,8 @@
     
     <div class="container">
         <div class="tabs">
-            <button class="tab active" onclick="showPanel('speedtest')">Speed Test</button>
+            <button class="tab active" onclick="showPanel('overview')">Overview</button>
+            <button class="tab" onclick="showPanel('speedtest')">Speed Test</button>
             <button class="tab" onclick="showPanel('traceroute')">Traceroute</button>
             <button class="tab" onclick="showPanel('mtr')">MTR</button>
             <button class="tab" onclick="showPanel('dns')">DNS</button>
@@ -295,8 +296,43 @@
             <button class="tab" onclick="showPanel('history')">Test History</button>
         </div>
         
+        <!-- Overview Panel -->
+        <div id="panel-overview" class="panel active">
+            <div class="metric-grid">
+                <div class="metric"><div class="metric-value" id="ov-total">–</div><div class="metric-label">Total Tests</div></div>
+                <div class="metric"><div class="metric-value" id="ov-today">–</div><div class="metric-label">Tests Today</div></div>
+                <div class="metric"><div class="metric-value" id="ov-success">–</div><div class="metric-label">Success Rate</div></div>
+                <div class="metric"><div class="metric-value" id="ov-uptime">–</div><div class="metric-label">Node Uptime</div></div>
+            </div>
+
+            <div class="card">
+                <h2>Node</h2>
+                <div id="ov-node" style="margin-top:10px;">Loading...</div>
+            </div>
+
+            <div class="card">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <h2 style="margin:0;">Recent Tests</h2>
+                    <button class="btn btn-secondary" onclick="showPanel('history')">View All →</button>
+                </div>
+                <div id="ov-recent" class="test-list" style="margin-top:15px;">Loading...</div>
+            </div>
+
+            <div class="card">
+                <h2>Quick Actions</h2>
+                <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;">
+                    <button class="btn btn-primary" onclick="showPanel('speedtest')">Speed Test</button>
+                    <button class="btn btn-primary" onclick="showPanel('traceroute')">Traceroute</button>
+                    <button class="btn btn-primary" onclick="showPanel('mtr')">MTR</button>
+                    <button class="btn btn-primary" onclick="showPanel('dns')">DNS Lookup</button>
+                    <button class="btn btn-primary" onclick="showPanel('ping')">Continuous Ping</button>
+                    <button class="btn btn-secondary" onclick="showPanel('tokens')">Customer Tokens</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Speed Test Panel -->
-        <div id="panel-speedtest" class="panel active">
+        <div id="panel-speedtest" class="panel">
             <div class="card">
                 <h2>HTTP Speed Test</h2>
                 <div class="form-row">
@@ -657,6 +693,7 @@
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
             loadNodeInfo();
+            loadOverview();
             updateSpeedtestForm();
             loadHistory();
             loadTokens();
@@ -676,13 +713,75 @@
         
         function showPanel(name) {
             document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            // Highlight the matching nav tab (works from quick-action buttons too,
+            // which used to steal the active class via event.target).
+            document.querySelectorAll('.tabs .tab').forEach(t =>
+                t.classList.toggle('active', (t.getAttribute('onclick') || '').includes(`'${name}'`)));
             document.getElementById(`panel-${name}`).classList.add('active');
-            event.target.classList.add('active');
-            
+
+            if (name === 'overview') loadOverview();
             if (name === 'history') loadHistory();
             if (name === 'tokens') loadTokens();
             if (name === 'ping') loadPingSessions();
+        }
+
+        function fmtUptime(sec) {
+            if (sec == null) return '–';
+            const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+            if (d) return `${d}d ${h}h`;
+            if (h) return `${h}h ${m}m`;
+            if (m) return `${m}m`;
+            return `${sec}s`;
+        }
+
+        async function loadOverview() {
+            // Node card
+            try {
+                const info = await (await fetch('/api/node/info')).json();
+                const feats = Object.entries(info.features || {}).filter(([, v]) => v).map(([k]) =>
+                    `<span style="background:#e3f2fd;color:#1565c0;padding:3px 10px;border-radius:20px;font-size:0.8em;">${_esc(k)}</span>`
+                ).join(' ');
+                document.getElementById('ov-node').innerHTML = `
+                    <table style="border-collapse:collapse;">
+                        <tr><td style="padding:3px 16px 3px 0;color:#666;">Name</td><td><strong>${_esc(info.node_name)}</strong></td></tr>
+                        <tr><td style="padding:3px 16px 3px 0;color:#666;">Node ID</td><td>${_esc(info.node_id)}</td></tr>
+                        ${info.location ? `<tr><td style="padding:3px 16px 3px 0;color:#666;">Location</td><td>${_esc(info.location)}</td></tr>` : ''}
+                        <tr><td style="padding:3px 16px 3px 0;color:#666;">Authentication</td><td>${info.auth_required ? '<span class="status-badge status-completed">enabled</span>' : '<span class="status-badge status-failed">disabled</span>'}</td></tr>
+                    </table>
+                    <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:6px;">${feats}</div>`;
+            } catch (e) {
+                document.getElementById('ov-node').textContent = 'Node info unavailable';
+            }
+
+            // Stats metrics
+            try {
+                const s = await (await fetch('/api/stats')).json();
+                document.getElementById('ov-total').textContent = s.total_tests;
+                document.getElementById('ov-today').textContent = s.tests_today;
+                document.getElementById('ov-success').textContent = s.success_rate != null ? s.success_rate + '%' : '–';
+                document.getElementById('ov-uptime').textContent = fmtUptime(s.uptime_seconds);
+            } catch (e) { /* stats stay as dashes */ }
+
+            // Recent tests
+            try {
+                const tests = await (await fetch('/api/tests?limit=8')).json();
+                const div = document.getElementById('ov-recent');
+                if (!Array.isArray(tests) || !tests.length) {
+                    div.innerHTML = '<p style="color:#888;">No tests yet — run one from the tabs above.</p>';
+                    return;
+                }
+                div.innerHTML = tests.map(t => `
+                    <div class="test-item" style="cursor:pointer;" onclick="viewTest(${t.id})">
+                        <div>
+                            <strong>#${t.id}</strong> - ${_esc(t.test_type)}
+                            <span class="status-badge status-${_esc(t.status)}">${_esc(t.status)}</span><br>
+                            <small>${new Date(t.created_at).toLocaleString()}</small>
+                        </div>
+                        <button class="btn btn-secondary" onclick="event.stopPropagation();viewTest(${t.id})">View</button>
+                    </div>`).join('');
+            } catch (e) {
+                document.getElementById('ov-recent').textContent = 'History unavailable';
+            }
         }
         
         function updateSpeedtestForm() {

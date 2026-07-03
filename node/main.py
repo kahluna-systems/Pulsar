@@ -64,6 +64,10 @@ iperf_runner = IperfRunner()
 capture_runner = PacketCaptureRunner()
 
 
+# Process start time, used for the dashboard uptime metric
+_process_started = datetime.utcnow()
+
+
 @app.on_event("startup")
 async def startup():
     """Initialize database and ensure admin exists."""
@@ -763,6 +767,30 @@ async def list_ping_sessions(user = Depends(require_role("engineer"))):
 
 
 # ============== Utility Endpoints ==============
+
+@app.get("/api/stats")
+async def get_stats(db: Session = Depends(get_db), user = Depends(require_role("engineer"))):
+    """Aggregate test statistics for the dashboard overview."""
+    from sqlalchemy import func
+    total = db.query(func.count(TestResult.id)).scalar() or 0
+    failed = db.query(func.count(TestResult.id)).filter(TestResult.status == "failed").scalar() or 0
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today = db.query(func.count(TestResult.id)).filter(TestResult.created_at >= today_start).scalar() or 0
+    by_type = dict(
+        db.query(TestResult.test_type, func.count(TestResult.id))
+        .group_by(TestResult.test_type).all()
+    )
+    last = db.query(func.max(TestResult.created_at)).scalar()
+    return {
+        "total_tests": total,
+        "tests_today": today,
+        "failed_tests": failed,
+        "success_rate": round((total - failed) / total * 100, 1) if total else None,
+        "by_type": by_type,
+        "last_test_at": last.isoformat() if last else None,
+        "uptime_seconds": int((datetime.utcnow() - _process_started).total_seconds()),
+    }
+
 
 @app.get("/api/node/info")
 async def get_node_info():
