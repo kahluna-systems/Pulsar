@@ -497,8 +497,11 @@ async def stream_mtr(target: str, max_hops: int = 30, protocol: str = "icmp"):
 
         cmd.append(target)
 
-        needs_sudo = os.geteuid() != 0 if hasattr(os, 'geteuid') else False
-        if needs_sudo and protocol in ("icmp", "tcp"):
+        import shutil
+        needs_priv = protocol in ("icmp", "tcp") and (
+            os.geteuid() != 0 if hasattr(os, 'geteuid') else False
+        )
+        if needs_priv and shutil.which("sudo"):
             cmd = ["sudo", "-n"] + cmd
 
         # Track cumulative stats per hop keyed by position index
