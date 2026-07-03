@@ -71,6 +71,10 @@ async def startup():
     db = next(get_db())
     ensure_admin_exists(db)
     db.close()
+    # Persist continuous-ping sessions to history when they finish.
+    ping_runner.on_complete = lambda sid, status: _persist_result(
+        "continuous_ping", {"target": status.get("target")}, status
+    )
 
 
 # ============== Authentication Endpoints ==============
@@ -448,6 +452,25 @@ def execute_test(test_id: int, test_type: str, config: dict):
     db.close()
 
 
+def _persist_result(test_type: str, config: dict, result: dict):
+    """Best-effort save of a streaming/session test (MTR, continuous ping) to history."""
+    try:
+        db = next(get_db())
+        try:
+            db.add(TestResult(
+                test_type=test_type,
+                config=json.dumps(config),
+                result=json.dumps(result),
+                status="completed",
+                completed_at=datetime.utcnow(),
+            ))
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        pass
+
+
 @app.get("/api/tests")
 async def list_tests(
     limit: int = 50,
@@ -670,6 +693,17 @@ async def stream_mtr(target: str, max_hops: int = 30, protocol: str = "icmp", to
                     break  # cancel_event was set
                 except asyncio.TimeoutError:
                     pass  # Continue next cycle
+
+            # Persist the completed MTR run to history (best-effort)
+            try:
+                if hops_snapshot:
+                    _persist_result(
+                        "mtr",
+                        {"target": target, "protocol": protocol, "max_hops": max_hops},
+                        {"target": target, "resolved_ip": resolved_ip, "hops": hops_snapshot},
+                    )
+            except Exception:
+                pass
 
             # Final event
             yield f"data: {json.dumps({'complete': True})}\n\n"

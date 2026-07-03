@@ -38,6 +38,8 @@ class ContinuousPingRunner:
     def __init__(self):
         self.sessions: Dict[int, PingSession] = {}
         self._next_id = 1
+        # Optional callback(session_id, status_dict) invoked when a session ends.
+        self.on_complete = None
     
     def start(self, config: dict) -> dict:
         """Start a continuous ping session."""
@@ -153,6 +155,13 @@ class ContinuousPingRunner:
         
         if session.status == "running":
             session.status = "stopped"
+
+        # Notify completion hook (e.g. persist the finished session to history).
+        if self.on_complete:
+            try:
+                self.on_complete(session.id, self.get_status(session.id))
+            except Exception:
+                pass
     
     def _single_ping(self, target: str, system: str, seq: int) -> dict:
         """Execute a single ping."""

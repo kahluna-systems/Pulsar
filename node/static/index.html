@@ -1246,6 +1246,40 @@
             `).join('');
         }
         
+        function _esc(s){ return String(s==null?'':s).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+        function _fmtVal(v){ return (typeof v==='number' && !Number.isInteger(v)) ? Math.round(v*100)/100 : v; }
+        function _scalarRows(obj){
+            return Object.entries(obj)
+                .filter(([k,v]) => v!=null && typeof v!=='object' && k!=='raw')
+                .map(([k,v]) => `<tr><td style="padding:3px 14px 3px 0;color:#666;white-space:nowrap;">${_esc(k)}</td><td style="padding:3px 0;"><strong>${_esc(_fmtVal(v))}</strong></td></tr>`)
+                .join('');
+        }
+        function _hopRows(hops){
+            return hops.map(hp => {
+                const loss = hp.loss_percent!=null ? hp.loss_percent+'%' : '';
+                const rtt = hp.rtt_avg!=null ? hp.rtt_avg+' ms' : (hp.rtt_ms!=null ? hp.rtt_ms+' ms' : '* * *');
+                return `<tr><td style="padding:4px 10px;">${_esc(hp.hop)}</td><td style="padding:4px 10px;">${_esc(hp.ip||'*')}</td><td style="padding:4px 10px;">${_esc(hp.hostname||'-')}</td><td style="padding:4px 10px;">${_esc(loss)}</td><td style="padding:4px 10px;">${_esc(rtt)}</td></tr>`;
+            }).join('');
+        }
+        function renderResult(type, r){
+            if(!r) return '<p style="color:#888;">No result data.</p>';
+            if(r.error) return `<div class="error-msg">${_esc(r.error)}</div>`;
+            let h='';
+            if(Array.isArray(r.hops) && r.hops.length){
+                h += `<table style="width:100%;border-collapse:collapse;margin-bottom:14px;"><thead><tr style="text-align:left;border-bottom:2px solid #eee;color:#555;"><th style="padding:6px 10px;">Hop</th><th style="padding:6px 10px;">IP</th><th style="padding:6px 10px;">Host</th><th style="padding:6px 10px;">Loss</th><th style="padding:6px 10px;">RTT</th></tr></thead><tbody>${_hopRows(r.hops)}</tbody></table>`;
+            }
+            const dnsRecs = r.records || r.values || r.answers;
+            if(Array.isArray(dnsRecs) && dnsRecs.length){
+                h += `<table style="border-collapse:collapse;margin-bottom:14px;"><thead><tr style="text-align:left;border-bottom:2px solid #eee;color:#555;"><th style="padding:6px 24px 6px 0;">Value</th><th style="padding:6px 0;">TTL</th></tr></thead><tbody>${dnsRecs.map(rec=>`<tr><td style="padding:3px 24px 3px 0;">${_esc(rec.value||rec.data||rec)}</td><td style="padding:3px 0;">${_esc(rec.ttl!=null?rec.ttl:'')}</td></tr>`).join('')}</tbody></table>`;
+            }
+            const rows = _scalarRows(r);
+            if(rows) h += `<table style="border-collapse:collapse;margin-bottom:8px;">${rows}</table>`;
+            if(r.stats && typeof r.stats==='object'){
+                h += `<h4 style="margin:12px 0 4px;">Statistics</h4><table style="border-collapse:collapse;">${_scalarRows(r.stats)}</table>`;
+            }
+            return h || '<p style="color:#888;">(no summary available — see raw data)</p>';
+        }
+
         async function viewTest(id) {
             const resp = await fetch(`/api/tests/${id}`);
             const test = await resp.json();
@@ -1265,7 +1299,8 @@
                     <h4>Config</h4>
                     <pre style="background:#2d3748;color:#e2e8f0;padding:15px;border-radius:6px;overflow:auto;max-height:150px;">${configStr}</pre>
                     <h4>Result</h4>
-                    <pre style="background:#2d3748;color:#e2e8f0;padding:15px;border-radius:6px;overflow:auto;max-height:300px;">${resultStr}</pre>
+                    <div style="margin-bottom:10px;">${renderResult(test.test_type, test.result)}</div>
+                    <details><summary style="cursor:pointer;color:#666;font-size:0.9em;">Raw JSON</summary><pre style="background:#2d3748;color:#e2e8f0;padding:15px;border-radius:6px;overflow:auto;max-height:300px;margin-top:8px;">${resultStr}</pre></details>
                     <button class="btn btn-secondary" onclick="this.closest('div').parentElement.remove()">Close</button>
                 </div>
             `;
