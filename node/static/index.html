@@ -205,7 +205,9 @@
           init = Object.assign({}, init, { headers });
         }
         return _fetch(input, init).then(function(resp){
-          if(resp.status===401 && isApi && !isBootstrap){ clearToken(); showLogin(); }
+          // On 401, re-evaluate auth state (shows setup or login as appropriate)
+          // rather than forcing login, so first-run setup isn't clobbered.
+          if(resp.status===401 && isApi && !isBootstrap){ clearToken(); check(); }
           return resp;
         });
       };
