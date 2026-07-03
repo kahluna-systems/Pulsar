@@ -13,7 +13,7 @@ import asyncio
 # Add parent directory for shared imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from .config import get_config, NodeConfig
+from .config import get_config, NodeConfig, save_config, set_config, _ENV_MAP
 from .database import get_db, init_db, TestResult, CustomerToken, User
 from .auth import (
     get_current_user, get_optional_user, require_role,
@@ -31,7 +31,8 @@ from shared.models import (
     TestType, TestStatus, LoginRequest, TokenResponse,
     CustomerTokenCreate, CustomerTokenResponse, TestRequest
 )
-from shared.utils import get_client_ip, RateLimiter
+from shared.utils import get_client_ip, RateLimiter, verify_password, hash_password
+from pydantic import BaseModel
 
 # Initialize app
 app = FastAPI(
@@ -140,6 +141,164 @@ async def setup_admin(request: LoginRequest, db: Session = Depends(get_db)):
         refresh_token=create_refresh_token(user.username),
         expires_in=3600
     )
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class AdminUserCreate(BaseModel):
+    username: str
+    password: str
+    role: str = "engineer"
+
+
+class AdminPasswordReset(BaseModel):
+    new_password: str
+
+
+@app.post("/api/auth/password")
+async def change_own_password(
+    req: PasswordChangeRequest,
+    db: Session = Depends(get_db),
+    user = Depends(get_current_user)
+):
+    """Change the current user's password (requires the current password)."""
+    if user is None:
+        raise HTTPException(status_code=400, detail="Authentication is disabled")
+    if not verify_password(req.current_password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    if len(req.new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+    user.password_hash = hash_password(req.new_password)
+    db.commit()
+    return {"changed": True}
+
+
+# ============== Admin Endpoints ==============
+
+@app.get("/api/admin/users")
+async def admin_list_users(db: Session = Depends(get_db), user = Depends(require_role("admin"))):
+    """List all user accounts."""
+    users = db.query(User).order_by(User.id).all()
+    return [
+        {
+            "id": u.id,
+            "username": u.username,
+            "role": u.role,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "last_login": u.last_login.isoformat() if u.last_login else None,
+        }
+        for u in users
+    ]
+
+
+@app.post("/api/admin/users")
+async def admin_create_user(
+    req: AdminUserCreate,
+    db: Session = Depends(get_db),
+    user = Depends(require_role("admin"))
+):
+    """Create a new user account."""
+    if req.role not in ("viewer", "engineer", "admin"):
+        raise HTTPException(status_code=400, detail="Role must be viewer, engineer, or admin")
+    if not req.username or len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="Username required; password must be at least 8 characters")
+    if db.query(User).filter(User.username == req.username).first():
+        raise HTTPException(status_code=400, detail="Username already exists")
+    new_user = create_user(db, req.username, req.password, req.role)
+    return {"id": new_user.id, "username": new_user.username, "role": new_user.role}
+
+
+@app.post("/api/admin/users/{user_id}/password")
+async def admin_reset_password(
+    user_id: int,
+    req: AdminPasswordReset,
+    db: Session = Depends(get_db),
+    user = Depends(require_role("admin"))
+):
+    """Reset another user's password."""
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if len(req.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    target.password_hash = hash_password(req.new_password)
+    db.commit()
+    return {"reset": target.username}
+
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    user = Depends(require_role("admin"))
+):
+    """Delete a user account (cannot delete yourself or the last admin)."""
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user is not None and target.id == user.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+    if target.role == "admin" and db.query(User).filter(User.role == "admin").count() <= 1:
+        raise HTTPException(status_code=400, detail="Cannot delete the last admin account")
+    db.delete(target)
+    db.commit()
+    return {"deleted": target.username}
+
+
+def _env_pinned_fields() -> list:
+    """Config fields currently overridden by environment variables (file edits
+    to these fields are ignored on restart because env wins at load time)."""
+    return [
+        field for env_key, (field, _) in _ENV_MAP.items()
+        if os.environ.get(env_key) not in (None, "")
+    ]
+
+
+@app.get("/api/admin/settings")
+async def admin_get_settings(user = Depends(require_role("admin"))):
+    """Current editable node settings."""
+    config = get_config()
+    return {
+        "node_name": config.node_name,
+        "node_id": config.node_id,
+        "location": config.location,
+        "features": config.features.model_dump(),
+        "limits": config.limits.model_dump(),
+        "token_expiry_hours": config.token_expiry_hours,
+        "env_pinned": _env_pinned_fields(),
+    }
+
+
+@app.put("/api/admin/settings")
+async def admin_update_settings(updates: dict, user = Depends(require_role("admin"))):
+    """Update node settings (whitelisted fields only) and persist to node_config.json."""
+    config = get_config()
+    data = config.model_dump()
+
+    for key in ("node_name", "location", "token_expiry_hours"):
+        if key in updates:
+            data[key] = updates[key]
+    if isinstance(updates.get("features"), dict):
+        data["features"].update(
+            {k: bool(v) for k, v in updates["features"].items() if k in data["features"]}
+        )
+    if isinstance(updates.get("limits"), dict):
+        data["limits"].update(
+            {k: int(v) for k, v in updates["limits"].items() if k in data["limits"]}
+        )
+
+    try:
+        new_config = NodeConfig(**data)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid settings: {e}")
+
+    config_path = os.environ.get("NODE_CONFIG", "node_config.json")
+    save_config(new_config, config_path)
+    set_config(new_config)
+    return {"saved": True, "env_pinned": _env_pinned_fields()}
 
 
 # ============== Customer Token Endpoints ==============

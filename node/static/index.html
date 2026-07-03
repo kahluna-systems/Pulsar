@@ -250,12 +250,23 @@
         let status;
         try{ status = await (await fetch('/api/auth/status')).json(); }
         catch(e){ return; }
-        if(!status.auth_required){ hide(); return; }
+        if(!status.auth_required){
+          hide();
+          // No auth -> no roles; keep the admin tab reachable for settings.
+          const at=document.getElementById('tab-admin'); if(at) at.style.display='';
+          return;
+        }
         if(status.setup_required){ showSetup(); return; }
         if(token()){
           try{
             const me = await (await fetch('/api/auth/me')).json();
-            if(me.authenticated){ hide(); const lb=document.getElementById('logout-btn'); if(lb) lb.style.display='inline-block'; return; }
+            if(me.authenticated){
+              hide();
+              window.currentUser = me;
+              const lb=document.getElementById('logout-btn'); if(lb) lb.style.display='inline-block';
+              if(me.role==='admin'){ const at=document.getElementById('tab-admin'); if(at) at.style.display=''; }
+              return;
+            }
           }catch(e){}
         }
         showLogin();
@@ -294,6 +305,7 @@
             <button class="tab" onclick="showPanel('capture')">Packet Capture</button>
             <button class="tab" onclick="showPanel('tokens')">Customer Tokens</button>
             <button class="tab" onclick="showPanel('history')">Test History</button>
+            <button class="tab" id="tab-admin" style="display:none;" onclick="showPanel('admin')">Admin</button>
         </div>
         
         <!-- Overview Panel -->
@@ -687,6 +699,62 @@
                 <div id="history-list" class="test-list">Loading...</div>
             </div>
         </div>
+
+        <!-- Admin Panel -->
+        <div id="panel-admin" class="panel">
+            <div class="card">
+                <h2>My Account</h2>
+                <div id="pw-msg" style="display:none;margin-top:10px;"></div>
+                <div class="form-row" style="margin-top:10px;">
+                    <div class="form-group">
+                        <label>Current Password</label>
+                        <input type="password" id="pw-current" autocomplete="current-password">
+                    </div>
+                    <div class="form-group">
+                        <label>New Password (min 8 chars)</label>
+                        <input type="password" id="pw-new" autocomplete="new-password">
+                    </div>
+                    <div class="form-group">
+                        <label>Confirm New Password</label>
+                        <input type="password" id="pw-confirm" autocomplete="new-password">
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="changeMyPassword()">Change Password</button>
+            </div>
+
+            <div class="card">
+                <h2>Users</h2>
+                <div id="admin-users" class="test-list" style="margin-top:10px;">Loading...</div>
+                <h3 style="margin-top:20px;">Add User</h3>
+                <div id="user-msg" style="display:none;margin-top:10px;"></div>
+                <div class="form-row" style="margin-top:10px;">
+                    <div class="form-group">
+                        <label>Username</label>
+                        <input type="text" id="new-user-name" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label>Password (min 8 chars)</label>
+                        <input type="password" id="new-user-pass" autocomplete="new-password">
+                    </div>
+                    <div class="form-group">
+                        <label>Role</label>
+                        <select id="new-user-role">
+                            <option value="engineer">Engineer</option>
+                            <option value="viewer">Viewer</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="adminCreateUser()">Create User</button>
+            </div>
+
+            <div class="card">
+                <h2>Node Settings</h2>
+                <div id="settings-msg" style="display:none;margin-top:10px;"></div>
+                <div id="admin-settings" style="margin-top:10px;">Loading...</div>
+                <button class="btn btn-primary" style="margin-top:15px;" onclick="saveSettings()">Save Settings</button>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -723,6 +791,163 @@
             if (name === 'history') loadHistory();
             if (name === 'tokens') loadTokens();
             if (name === 'ping') loadPingSessions();
+            if (name === 'admin') loadAdmin();
+        }
+
+        // ===== Admin panel =====
+        function _flash(id, text, ok) {
+            const el = document.getElementById(id);
+            el.className = ok ? 'success-msg' : 'error-msg';
+            el.textContent = text;
+            el.style.display = 'block';
+            setTimeout(() => { el.style.display = 'none'; }, 5000);
+        }
+
+        async function loadAdmin() {
+            loadAdminUsers();
+            loadAdminSettings();
+        }
+
+        async function loadAdminUsers() {
+            const div = document.getElementById('admin-users');
+            try {
+                const resp = await fetch('/api/admin/users');
+                if (!resp.ok) { div.textContent = 'Unable to load users (admin role required).'; return; }
+                const users = await resp.json();
+                const myName = window.currentUser?.username;
+                div.innerHTML = users.map(u => `
+                    <div class="test-item">
+                        <div>
+                            <strong>${_esc(u.username)}</strong>
+                            <span class="status-badge ${u.role === 'admin' ? 'status-running' : 'status-completed'}">${_esc(u.role)}</span>
+                            ${u.username === myName ? '<span style="color:#888;font-size:0.85em;"> (you)</span>' : ''}<br>
+                            <small>Last login: ${u.last_login ? new Date(u.last_login).toLocaleString() : 'never'}</small>
+                        </div>
+                        <div style="display:flex;gap:8px;">
+                            <button class="btn btn-secondary" onclick="adminResetPassword(${u.id}, '${_esc(u.username)}')">Reset Password</button>
+                            ${u.username !== myName ? `<button class="btn btn-danger" onclick="adminDeleteUser(${u.id}, '${_esc(u.username)}')">Delete</button>` : ''}
+                        </div>
+                    </div>`).join('');
+            } catch (e) { div.textContent = 'Unable to load users.'; }
+        }
+
+        async function adminCreateUser() {
+            const username = document.getElementById('new-user-name').value.trim();
+            const password = document.getElementById('new-user-pass').value;
+            const role = document.getElementById('new-user-role').value;
+            const resp = await fetch('/api/admin/users', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password, role })
+            });
+            if (resp.ok) {
+                _flash('user-msg', `User "${username}" created.`, true);
+                document.getElementById('new-user-name').value = '';
+                document.getElementById('new-user-pass').value = '';
+                loadAdminUsers();
+            } else {
+                const err = await resp.json().catch(() => ({}));
+                _flash('user-msg', err.detail || 'Failed to create user', false);
+            }
+        }
+
+        async function adminResetPassword(id, username) {
+            const pw = prompt(`New password for "${username}" (min 8 characters):`);
+            if (!pw) return;
+            const resp = await fetch(`/api/admin/users/${id}/password`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ new_password: pw })
+            });
+            const err = await resp.json().catch(() => ({}));
+            _flash('user-msg', resp.ok ? `Password reset for "${username}".` : (err.detail || 'Reset failed'), resp.ok);
+        }
+
+        async function adminDeleteUser(id, username) {
+            if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+            const resp = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+            const err = await resp.json().catch(() => ({}));
+            _flash('user-msg', resp.ok ? `User "${username}" deleted.` : (err.detail || 'Delete failed'), resp.ok);
+            if (resp.ok) loadAdminUsers();
+        }
+
+        async function changeMyPassword() {
+            const cur = document.getElementById('pw-current').value;
+            const nw = document.getElementById('pw-new').value;
+            const cf = document.getElementById('pw-confirm').value;
+            if (nw !== cf) { _flash('pw-msg', 'New passwords do not match.', false); return; }
+            const resp = await fetch('/api/auth/password', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ current_password: cur, new_password: nw })
+            });
+            if (resp.ok) {
+                _flash('pw-msg', 'Password changed.', true);
+                ['pw-current', 'pw-new', 'pw-confirm'].forEach(i => document.getElementById(i).value = '');
+            } else {
+                const err = await resp.json().catch(() => ({}));
+                _flash('pw-msg', err.detail || 'Password change failed', false);
+            }
+        }
+
+        let _settingsEnvPinned = [];
+        async function loadAdminSettings() {
+            const div = document.getElementById('admin-settings');
+            try {
+                const resp = await fetch('/api/admin/settings');
+                if (!resp.ok) { div.textContent = 'Unable to load settings (admin role required).'; return; }
+                const s = await resp.json();
+                _settingsEnvPinned = s.env_pinned || [];
+                const pin = f => _settingsEnvPinned.includes(f)
+                    ? '<span style="color:#856404;font-size:0.8em;"> (set by environment — reverts on restart)</span>' : '';
+                const featBoxes = Object.entries(s.features).map(([k, v]) =>
+                    `<label style="display:flex;align-items:center;gap:6px;padding:4px 10px;background:#f8f9fa;border:1px solid #e1e5e9;border-radius:6px;cursor:pointer;">
+                        <input type="checkbox" id="feat-${k}" ${v ? 'checked' : ''}> ${_esc(k)}</label>`).join('');
+                const limitInputs = Object.entries(s.limits).map(([k, v]) =>
+                    `<div class="form-group"><label>${_esc(k.replace(/_/g, ' '))}</label>
+                        <input type="number" id="lim-${k}" value="${v}"></div>`).join('');
+                div.innerHTML = `
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Node Name${pin('node_name')}</label>
+                            <input type="text" id="set-node_name" value="${_esc(s.node_name)}">
+                        </div>
+                        <div class="form-group">
+                            <label>Location</label>
+                            <input type="text" id="set-location" value="${_esc(s.location || '')}" placeholder="e.g. GCP us-east4">
+                        </div>
+                        <div class="form-group">
+                            <label>Customer Token Expiry (hours)</label>
+                            <input type="number" id="set-token_expiry_hours" value="${s.token_expiry_hours}">
+                        </div>
+                    </div>
+                    <h3 style="margin-top:15px;">Features</h3>
+                    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;">${featBoxes}</div>
+                    <h3 style="margin-top:20px;">Limits</h3>
+                    <div class="form-row" style="margin-top:8px;">${limitInputs}</div>
+                    <p style="color:#888;font-size:0.85em;margin-top:8px;">Node ID: ${_esc(s.node_id)} (fixed)</p>`;
+            } catch (e) { div.textContent = 'Unable to load settings.'; }
+        }
+
+        async function saveSettings() {
+            const features = {}, limits = {};
+            document.querySelectorAll('[id^="feat-"]').forEach(cb => features[cb.id.slice(5)] = cb.checked);
+            document.querySelectorAll('[id^="lim-"]').forEach(inp => limits[inp.id.slice(4)] = parseInt(inp.value) || 0);
+            const body = {
+                node_name: document.getElementById('set-node_name').value.trim(),
+                location: document.getElementById('set-location').value.trim() || null,
+                token_expiry_hours: parseInt(document.getElementById('set-token_expiry_hours').value) || 24,
+                features, limits
+            };
+            const resp = await fetch('/api/admin/settings', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (resp.ok) {
+                _flash('settings-msg', 'Settings saved.', true);
+                loadNodeInfo();
+                loadAdminSettings();
+            } else {
+                const err = await resp.json().catch(() => ({}));
+                _flash('settings-msg', err.detail || 'Save failed', false);
+            }
         }
 
         function fmtUptime(sec) {
