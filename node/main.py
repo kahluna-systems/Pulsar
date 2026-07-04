@@ -78,7 +78,8 @@ async def startup():
     db.close()
     # Persist continuous-ping sessions to history when they finish.
     ping_runner.on_complete = lambda sid, status: _persist_result(
-        "continuous_ping", {"target": status.get("target")}, status
+        "continuous_ping", {"target": status.get("target")}, status,
+        **_ping_attribution.pop(sid, {})
     )
 
 
@@ -311,13 +312,17 @@ async def create_token(
     user = Depends(require_role("engineer"))
 ):
     """Create a customer test token."""
+    if token_config.org_id is not None:
+        if not db.query(Organization).filter(Organization.id == token_config.org_id).first():
+            raise HTTPException(status_code=400, detail="Organization not found")
     token = create_customer_token(
         db,
         customer_id=token_config.customer_id,
         expires_hours=token_config.expires_hours,
         max_uses=token_config.max_uses,
         note=token_config.note,
-        created_by=user.username if user else None
+        created_by=user.username if user else None,
+        org_id=token_config.org_id
     )
     
     # Build test URL
@@ -344,11 +349,14 @@ async def list_tokens(
 ):
     """List all customer tokens."""
     tokens = db.query(CustomerToken).order_by(CustomerToken.created_at.desc()).all()
+    org_names = {o.id: o.name for o in db.query(Organization).all()}
     return [
         {
             "id": t.id,
             "token": t.token[:8] + "...",  # Partial token for display
             "customer_id": t.customer_id,
+            "org_id": t.org_id,
+            "org_name": org_names.get(t.org_id),
             "expires_at": t.expires_at.isoformat(),
             "max_uses": t.max_uses,
             "use_count": t.use_count,
@@ -489,15 +497,18 @@ async def speedtest_save_result(
     # Check for token
     token_str = data.get("token")
     customer_id = None
-    
+    token_org_id = None
+
     if token_str:
         token = validate_customer_token(db, token_str)
         if token:
             customer_id = token.customer_id
-    
+            token_org_id = token.org_id
+
     test_result = TestResult(
         test_type="speedtest_customer",
         customer_id=customer_id,
+        org_id=token_org_id,
         client_ip=client_ip,
         config=json.dumps({
             "user_agent": request.headers.get("User-Agent", "unknown"),
@@ -678,7 +689,9 @@ async def create_test(
     test_result = TestResult(
         test_type=test_request.test_type.value,
         config=json.dumps(test_request.config),
-        status="running"
+        status="running",
+        org_id=test_request.org_id,
+        circuit_id=test_request.circuit_id
     )
     db.add(test_result)
     db.commit()
@@ -746,7 +759,7 @@ def execute_test(test_id: int, test_type: str, config: dict):
     db.close()
 
 
-def _persist_result(test_type: str, config: dict, result: dict):
+def _persist_result(test_type: str, config: dict, result: dict, org_id: int = None, circuit_id: int = None):
     """Best-effort save of a streaming/session test (MTR, continuous ping) to history."""
     try:
         db = next(get_db())
@@ -757,6 +770,8 @@ def _persist_result(test_type: str, config: dict, result: dict):
                 result=json.dumps(result),
                 status="completed",
                 completed_at=datetime.utcnow(),
+                org_id=org_id,
+                circuit_id=circuit_id,
             ))
             db.commit()
         finally:
@@ -769,22 +784,32 @@ def _persist_result(test_type: str, config: dict, result: dict):
 async def list_tests(
     limit: int = 50,
     test_type: str = None,
+    org_id: int = None,
     db: Session = Depends(get_db),
     user = Depends(require_role("engineer"))
 ):
     """List recent tests."""
     query = db.query(TestResult).order_by(TestResult.created_at.desc())
-    
+
     if test_type:
         query = query.filter(TestResult.test_type == test_type)
-    
+    if org_id:
+        query = query.filter(TestResult.org_id == org_id)
+
     tests = query.limit(limit).all()
-    
+
+    org_names = {o.id: o.name for o in db.query(Organization).all()}
+    circuit_labels = {c.id: c.label for c in db.query(Circuit).all()}
+
     return [
         {
             "id": t.id,
             "test_type": t.test_type,
             "customer_id": t.customer_id,
+            "org_id": t.org_id,
+            "org_name": org_names.get(t.org_id),
+            "circuit_id": t.circuit_id,
+            "circuit_label": circuit_labels.get(t.circuit_id),
             "status": t.status,
             "created_at": t.created_at.isoformat(),
             "completed_at": t.completed_at.isoformat() if t.completed_at else None
@@ -801,10 +826,17 @@ async def get_test(test_id: int, db: Session = Depends(get_db),
     if not test:
         raise HTTPException(status_code=404, detail="Test not found")
     
+    org = db.query(Organization).filter(Organization.id == test.org_id).first() if test.org_id else None
+    circuit = db.query(Circuit).filter(Circuit.id == test.circuit_id).first() if test.circuit_id else None
+
     return {
         "id": test.id,
         "test_type": test.test_type,
         "customer_id": test.customer_id,
+        "org_id": test.org_id,
+        "org_name": org.name if org else None,
+        "circuit_id": test.circuit_id,
+        "circuit_label": circuit.label if circuit else None,
         "client_ip": test.client_ip,
         "config": json.loads(test.config) if test.config else None,
         "result": json.loads(test.result) if test.result else None,
@@ -820,7 +852,8 @@ _active_mtr_sessions = {}  # session_id -> cancel flag
 
 
 @app.get("/api/mtr/stream")
-async def stream_mtr(target: str, max_hops: int = 30, protocol: str = "icmp", token: str = None):
+async def stream_mtr(target: str, max_hops: int = 30, protocol: str = "icmp", token: str = None,
+                     org_id: int = None, circuit_id: int = None):
     """Stream live MTR results via SSE. Runs repeated single-cycle passes until stopped."""
     # EventSource can't set an Authorization header, so the JWT arrives as ?token=.
     config = get_config()
@@ -995,6 +1028,8 @@ async def stream_mtr(target: str, max_hops: int = 30, protocol: str = "icmp", to
                         "mtr",
                         {"target": target, "protocol": protocol, "max_hops": max_hops},
                         {"target": target, "resolved_ip": resolved_ip, "hops": hops_snapshot},
+                        org_id=org_id,
+                        circuit_id=circuit_id,
                     )
             except Exception:
                 pass
@@ -1032,10 +1067,20 @@ async def stop_mtr(session_id: str, user = Depends(require_role("engineer"))):
 
 # ============== Continuous Ping Endpoints ==============
 
+# session_id -> attribution, consumed by the on_complete persistence hook
+_ping_attribution = {}
+
+
 @app.post("/api/ping/start")
 async def start_ping(config: dict, user = Depends(require_role("engineer"))):
     """Start a continuous ping session."""
-    return ping_runner.start(config)
+    org_id = config.pop("org_id", None)
+    circuit_id = config.pop("circuit_id", None)
+    result = ping_runner.start(config)
+    session_id = result.get("session_id")
+    if session_id is not None and (org_id or circuit_id):
+        _ping_attribution[session_id] = {"org_id": org_id, "circuit_id": circuit_id}
+    return result
 
 
 @app.get("/api/ping/{session_id}")

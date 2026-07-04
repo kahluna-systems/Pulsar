@@ -56,6 +56,7 @@ class UserResponse(BaseModel):
 # Customer Token Models
 class CustomerTokenCreate(BaseModel):
     customer_id: Optional[str] = None
+    org_id: Optional[int] = None
     expires_hours: int = Field(default=24, ge=1, le=168)
     max_uses: int = Field(default=1, ge=1, le=100)
     note: Optional[str] = None
@@ -145,6 +146,8 @@ class PacketCaptureConfig(BaseModel):
 class TestRequest(BaseModel):
     test_type: TestType
     config: Dict[str, Any]
+    org_id: Optional[int] = None
+    circuit_id: Optional[int] = None
 
 
 class TestResponse(BaseModel):

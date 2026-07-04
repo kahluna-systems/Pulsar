@@ -140,12 +140,14 @@ def create_customer_token(
     expires_hours: int = 24,
     max_uses: int = 1,
     note: Optional[str] = None,
-    created_by: Optional[str] = None
+    created_by: Optional[str] = None,
+    org_id: Optional[int] = None
 ) -> CustomerToken:
     """Create a new customer test token."""
     token = CustomerToken(
         token=generate_token(24),
         customer_id=customer_id,
+        org_id=org_id,
         note=note,
         expires_at=datetime.utcnow() + timedelta(hours=expires_hours),
         max_uses=max_uses,

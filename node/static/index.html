@@ -307,6 +307,18 @@
             <button class="tab" onclick="showPanel('history')">Test History</button>
             <button class="tab" id="tab-admin" style="display:none;" onclick="showPanel('admin')">Admin</button>
         </div>
+
+        <!-- Test attribution bar: stamps org/circuit onto tests run from the tool panels -->
+        <div class="card" id="attr-bar" style="padding:12px 20px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:20px;">
+            <span style="font-weight:600;color:#555;">Run tests for:</span>
+            <select id="attr-org" onchange="attrOrgChanged()" style="padding:8px;border:1px solid #e1e5e9;border-radius:6px;min-width:180px;">
+                <option value="">— internal / unattributed —</option>
+            </select>
+            <select id="attr-circuit" onchange="attrCircuitChanged()" disabled style="padding:8px;border:1px solid #e1e5e9;border-radius:6px;min-width:160px;">
+                <option value="">— circuit —</option>
+            </select>
+            <span id="attr-endpoint" style="color:#888;font-size:0.85em;"></span>
+        </div>
         
         <!-- Overview Panel -->
         <div id="panel-overview" class="panel active">
@@ -673,6 +685,12 @@
                 <p class="help-text" style="margin-bottom:15px;">Generate a tracked link for customers. Results will be associated with the customer ID.</p>
                 <div class="form-row">
                     <div class="form-group">
+                        <label>Organization (optional)</label>
+                        <select id="token-org">
+                            <option value="">— none —</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
                         <label>Customer ID / Circuit ID</label>
                         <input type="text" id="token-customer" placeholder="CKT-12345">
                     </div>
@@ -719,6 +737,15 @@
                             <option value="dns">DNS</option>
                             <option value="tcp_check">TCP Check</option>
                             <option value="ssl_check">SSL Check</option>
+                            <option value="continuous_ping">Continuous Ping</option>
+                            <option value="iperf">iPerf3</option>
+                            <option value="packet_capture">Packet Capture</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Filter by Organization</label>
+                        <select id="history-org" onchange="loadHistory()">
+                            <option value="">All Organizations</option>
                         </select>
                     </div>
                 </div>
@@ -824,12 +851,65 @@
         // ===== Organizations & Circuits =====
         let _orgsCache = [];
 
+        function _attr() {
+            return {
+                org_id: parseInt(document.getElementById('attr-org')?.value) || null,
+                circuit_id: parseInt(document.getElementById('attr-circuit')?.value) || null
+            };
+        }
+
+        function _populateOrgSelects() {
+            const opts = _orgsCache.map(o => `<option value="${o.id}">${_esc(o.name)}</option>`).join('');
+            const attrSel = document.getElementById('attr-org');
+            if (attrSel) {
+                const cur = attrSel.value;
+                attrSel.innerHTML = '<option value="">— internal / unattributed —</option>' + opts;
+                attrSel.value = cur;
+            }
+            const tokSel = document.getElementById('token-org');
+            if (tokSel) {
+                const cur = tokSel.value;
+                tokSel.innerHTML = '<option value="">— none —</option>' + opts;
+                tokSel.value = cur;
+            }
+            const histSel = document.getElementById('history-org');
+            if (histSel) {
+                const cur = histSel.value;
+                histSel.innerHTML = '<option value="">All Organizations</option>' + opts;
+                histSel.value = cur;
+            }
+        }
+
+        function attrOrgChanged() {
+            const orgId = parseInt(document.getElementById('attr-org').value) || null;
+            const org = _orgsCache.find(o => o.id === orgId);
+            const circSel = document.getElementById('attr-circuit');
+            circSel.innerHTML = '<option value="">— circuit —</option>' +
+                (org ? org.circuits.map(c => `<option value="${c.id}">${_esc(c.label)}</option>`).join('') : '');
+            circSel.disabled = !org;
+            document.getElementById('attr-endpoint').textContent = '';
+        }
+
+        function attrCircuitChanged() {
+            const a = _attr();
+            const org = _orgsCache.find(o => o.id === a.org_id);
+            const c = org?.circuits.find(c => c.id === a.circuit_id);
+            const ep = document.getElementById('attr-endpoint');
+            ep.textContent = c && c.target ? `endpoint: ${c.target}` : '';
+            // Convenience: pre-fill the active panel's first empty target field
+            if (c && c.target) {
+                const inp = document.querySelector('.panel.active input[type="text"]');
+                if (inp && !inp.value) inp.value = c.target;
+            }
+        }
+
         async function loadOrgs() {
             const div = document.getElementById('org-list');
             try {
                 const resp = await fetch('/api/orgs');
                 if (!resp.ok) { div.textContent = 'Unable to load organizations.'; return; }
                 _orgsCache = await resp.json();
+                _populateOrgSelects();
                 if (!_orgsCache.length) {
                     div.innerHTML = '<p style="color:#888;">No organizations yet — add your first customer below.</p>';
                     return;
@@ -1150,7 +1230,7 @@
                 const resp = await fetch('/api/tests', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ test_type: testType, config })
+                    body: JSON.stringify({ test_type: testType, config, ..._attr() })
                 });
                 const { id } = await resp.json();
                 
@@ -1229,6 +1309,9 @@
             const params = new URLSearchParams({ target, max_hops: maxHops });
             const _authTok = window.pulsarAuth && window.pulsarAuth.token();
             if (_authTok) params.set('token', _authTok);
+            const _mtrAttr = _attr();
+            if (_mtrAttr.org_id) params.set('org_id', _mtrAttr.org_id);
+            if (_mtrAttr.circuit_id) params.set('circuit_id', _mtrAttr.circuit_id);
             mtrEventSource = new EventSource(`/api/mtr/stream?${params}`);
 
             mtrEventSource.onmessage = (event) => {
@@ -1422,7 +1505,8 @@
                 body: JSON.stringify({
                     target: document.getElementById('ping-target').value,
                     interval: parseFloat(document.getElementById('ping-interval').value),
-                    duration: parseInt(document.getElementById('ping-duration').value)
+                    duration: parseInt(document.getElementById('ping-duration').value),
+                    ..._attr()
                 })
             });
             const result = await resp.json();
@@ -1473,6 +1557,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     customer_id: document.getElementById('token-customer').value || null,
+                    org_id: parseInt(document.getElementById('token-org').value) || null,
                     expires_hours: parseInt(document.getElementById('token-expires').value),
                     max_uses: parseInt(document.getElementById('token-uses').value),
                     note: document.getElementById('token-note').value || null
@@ -1505,6 +1590,7 @@
                 <div class="test-item" style="${t.expired || t.exhausted ? 'opacity:0.6' : ''}">
                     <div>
                         <strong>${t.customer_id || 'No customer ID'}</strong>
+                        ${t.org_name ? `<span class="status-badge" style="background:#e3f2fd;color:#1565c0;">${_esc(t.org_name)}</span>` : ''}
                         <span class="status-badge ${t.expired ? 'status-failed' : (t.exhausted ? 'status-running' : 'status-completed')}">
                             ${t.expired ? 'Expired' : (t.exhausted ? 'Used up' : 'Active')}
                         </span>
@@ -1667,21 +1753,26 @@
         
         async function loadHistory() {
             const filter = document.getElementById('history-filter')?.value || '';
-            const resp = await fetch(`/api/tests?limit=50${filter ? `&test_type=${filter}` : ''}`);
+            const orgFilter = document.getElementById('history-org')?.value || '';
+            const params = new URLSearchParams({ limit: 50 });
+            if (filter) params.set('test_type', filter);
+            if (orgFilter) params.set('org_id', orgFilter);
+            const resp = await fetch(`/api/tests?${params}`);
             const tests = await resp.json();
-            
+
             const div = document.getElementById('history-list');
             if (!tests.length) {
                 div.innerHTML = '<p>No tests yet</p>';
                 return;
             }
-            
+
             div.innerHTML = tests.map(t => `
                 <div class="test-item">
                     <div>
                         <strong>#${t.id}</strong> - ${t.test_type}
                         <span class="status-badge status-${t.status}">${t.status}</span>
-                        ${t.customer_id ? `<br><small>Customer: ${t.customer_id}</small>` : ''}
+                        ${t.org_name ? `<span class="status-badge" style="background:#e3f2fd;color:#1565c0;">${_esc(t.org_name)}${t.circuit_label ? ' / ' + _esc(t.circuit_label) : ''}</span>` : ''}
+                        ${t.customer_id ? `<br><small>Customer: ${_esc(t.customer_id)}</small>` : ''}
                         <br><small>${new Date(t.created_at).toLocaleString()}</small>
                     </div>
                     <button class="btn btn-secondary" onclick="viewTest(${t.id})">View</button>
@@ -1737,6 +1828,7 @@
                 <div style="background:white;padding:30px;border-radius:12px;max-width:800px;max-height:80vh;overflow:auto;width:90%;">
                     <h3>Test #${test.id} - ${test.test_type}</h3>
                     <p><strong>Status:</strong> ${test.status} | <strong>Created:</strong> ${new Date(test.created_at).toLocaleString()}</p>
+                    ${test.org_name ? `<p><strong>Organization:</strong> ${_esc(test.org_name)}${test.circuit_label ? ` &mdash; Circuit ${_esc(test.circuit_label)}` : ''}</p>` : ''}
                     ${test.customer_id ? `<p><strong>Customer:</strong> ${test.customer_id}</p>` : ''}
                     ${test.client_ip ? `<p><strong>Client IP:</strong> ${test.client_ip}</p>` : ''}
                     <h4>Config</h4>
