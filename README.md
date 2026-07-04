@@ -6,34 +6,63 @@ Part of the **KahLuna Nexus** suite: Pulsar runs **standalone** as a dedicated p
 
 ## Features
 
+### Dashboard
+- **Overview dashboard** — test counts, success rate, node uptime, tests-by-type breakdown, recent activity
+- Collapsible side navigation, authenticated single-page app
+
 ### Diagnostic Tools
 - **HTTP Speed Test** - Ookla-style speed test with customer-facing portal
 - **Traceroute** - Path analysis with ICMP/UDP/TCP options
-- **MTR** - Combined traceroute + ping with packet loss statistics
+- **MTR** - Live-streaming traceroute + ping with packet loss statistics
 - **DNS Lookup** - Query any record type, check propagation across public DNS
 - **TCP Port Check** - Test port connectivity with connection timing
 - **SSL Certificate Check** - Validate certificates, check expiry
 - **Continuous Ping** - Long-running ping monitor with jitter tracking
-- **iPerf3** - Raw bandwidth testing (requires iperf3 on both ends)
+- **iPerf3** - Raw bandwidth testing, client or server mode, with a built-in **Remote Client Guide**: per-OS install pointers, copy-paste commands pre-filled with the node's address, and a **one-paste Windows setup** that downloads a version-pinned, checksum-verified iperf3 client straight from the node (`/downloads/iperf3-win64.zip`)
 - **Packet Capture** - tcpdump integration for traffic analysis
 
+### Authentication & Administration
+- **First-run setup** — no default credentials; the first visit creates the admin account
+- JWT-based login; roles: `viewer`, `engineer`, `admin`
+- **Admin panel** — user management, password changes, node settings (name, location, feature toggles, limits) editable from the UI
+
+### Customers & Attribution
+- **Organizations registry** (customers and partners) with **circuits** carrying registered test endpoints
+- **"Run tests for:"** attribution — every test can be stamped with an organization/circuit; selecting a circuit pre-fills its endpoint as the target
+- Test History filterable by organization; searchable customer master-detail view
+
 ### Customer Testing
-- Generate time-limited, tracked test tokens
+- Generate time-limited, tracked test tokens (linkable to an organization)
 - Customer-facing speed test portal (no software required)
-- Results automatically associated with customer/circuit ID
+- Results automatically associated with customer/circuit/organization
 - All tests logged for historical analysis
 
 ### Architecture
 - **Standalone Mode**: Single node deployment with local SQLite
-- **Hub Mode**: Central PostgreSQL database with multiple edge nodes
-- Docker support for easy deployment
+- **Hub Mode**: Central PostgreSQL database with multiple edge nodes (planned — sync fields present)
+- Docker-first deployment with host networking for a true network vantage point
 
 ## Quick Start
 
-### Option 1: Python (Development)
+### Docker (recommended)
 
 ```bash
-# Clone and setup
+git clone https://github.com/kahluna-systems/Pulsar.git pulsar
+cd pulsar
+docker compose up -d --build
+```
+
+Then open `http://<host>:8000` — the first visit prompts you to **create the admin account**.
+
+Notes:
+- The compose file uses `network_mode: host` so diagnostics measure from the host's real network position; the app binds `0.0.0.0:8000` directly.
+- Data (SQLite DB + generated node config, including the token-signing secret) persists on the `pulsar_node_data` volume across rebuilds.
+- Privileged tools (ping/traceroute/MTR/tcpdump) work via file capabilities baked into the image — the app runs as a non-root user with no sudo.
+
+### Python (development)
+
+```bash
+git clone https://github.com/kahluna-systems/Pulsar.git pulsar
 cd pulsar
 python -m venv venv
 source venv/bin/activate  # or venv\Scripts\activate on Windows
@@ -44,112 +73,42 @@ export PYTHONPATH=$(pwd)   # Windows PowerShell: $env:PYTHONPATH = $PWD
 python -m uvicorn node.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### Option 2: Docker
-
-```bash
-# Build and run
-docker-compose up -d
-
-# Or build manually
-docker build -f Dockerfile.node -t pulsar-node .
-docker run -p 8000:8000 --cap-add=NET_RAW pulsar-node
-```
+Requires **Python 3.12+**.
 
 ## Access
 
-- **Engineer Dashboard**: http://localhost:8000
-- **Customer Speed Test**: http://localhost:8000/speedtest
-
-## Usage
-
-### For Engineers
-
-1. Open the dashboard at http://localhost:8000
-2. Select a diagnostic tool from the tabs
-3. Enter target information and run the test
-4. View results in the Test History
-
-### For Customer Testing
-
-1. Go to "Customer Tokens" tab
-2. Enter customer/circuit ID and create a token
-3. Copy the generated link and send to customer
-4. Customer opens link and runs speed test
-5. Results appear in your Test History with customer ID
+- **Engineer Dashboard**: `http://<host>:8000` (login required once auth is enabled)
+- **Customer Speed Test**: `http://<host>:8000/speedtest` (public)
+- **API docs**: `http://<host>:8000/docs`
 
 ## Configuration
 
-Create `node_config.json` to customize:
+Configuration layers, highest precedence first: **environment variables → `node_config.json` → defaults**. On first run the node generates and persists its identity (`node_id`, `secret_key`).
 
-```json
-{
-  "node_id": "edge-node-charlotte-01",
-  "node_name": "Charlotte Edge Node",
-  "location": "Charlotte, NC",
-  "require_auth": false,
-  "features": {
-    "speedtest": true,
-    "traceroute": true,
-    "mtr": true,
-    "dns": true,
-    "tcp_check": true,
-    "ssl_check": true,
-    "iperf": true,
-    "packet_capture": true,
-    "continuous_ping": true
-  }
-}
-```
+Common environment variables (see `docker-compose.yml`):
 
-## System Requirements
+| Variable | Purpose |
+|----------|---------|
+| `NODE_ID` / `NODE_NAME` / `NODE_LOCATION` | Node identity shown in the UI |
+| `REQUIRE_AUTH` | Enable login + first-run admin setup (`true` recommended) |
+| `DATABASE_PATH` | SQLite path (point at a persistent volume) |
+| `NODE_CONFIG` | Where the generated config file lives |
+| `HUB_URL` / `HUB_API_KEY` | Reserved for hub mode |
 
-### Required
-- Python 3.8+
-- Network access to targets
+Fields set via environment override the config file on every start; the admin panel flags such fields as environment-pinned. Feature toggles and limits are editable in the **Admin** tab.
 
-### Optional (for full functionality)
-- `iperf3` - for iPerf bandwidth tests
-- `tcpdump` - for packet capture (requires root/sudo)
-- `mtr` - for MTR diagnostics (falls back to simulated if not available)
-- `traceroute` - for traceroute (uses system traceroute/tracert)
+## Ports
 
-### Install on Ubuntu/Debian
-```bash
-sudo apt-get install iperf3 tcpdump mtr-tiny traceroute dnsutils
-```
-
-### Install on Windows
-- iPerf3: Download from https://iperf.fr/iperf-download.php
-- Other tools have Windows alternatives or fallbacks built-in
-
-## API Reference
-
-### Test Endpoints
-- `POST /api/tests` - Create and run a test
-- `GET /api/tests` - List recent tests
-- `GET /api/tests/{id}` - Get test details
-
-### Speed Test Endpoints
-- `GET /api/speedtest/ping` - Latency measurement
-- `GET /api/speedtest/download` - Download data
-- `POST /api/speedtest/upload` - Upload data
-- `POST /api/speedtest/result` - Save customer result
-
-### Token Endpoints
-- `POST /api/tokens` - Create customer token
-- `GET /api/tokens` - List tokens
-- `DELETE /api/tokens/{id}` - Delete token
-
-### Continuous Ping
-- `POST /api/ping/start` - Start ping session
-- `GET /api/ping/{id}` - Get session status
-- `POST /api/ping/{id}/stop` - Stop session
+| Port | Use |
+|------|-----|
+| 8000/tcp | Dashboard, API, customer speed test |
+| 5201/tcp+udp | iPerf3 server mode (open in your cloud/host firewall if used) |
 
 ## Security Notes
 
+- Authentication ships enabled with **no default credentials** — the first visitor creates the admin account (do this immediately on a public deployment)
 - Customer tokens are time-limited and use-limited
-- Packet capture requires elevated privileges
-- Consider enabling authentication for production (`require_auth: true`)
+- `node_config.json` contains the token-signing secret — it is gitignored and must stay per-deploy
 - Use HTTPS in production (reverse proxy recommended)
 
 ## License
