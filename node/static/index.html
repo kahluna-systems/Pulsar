@@ -145,6 +145,9 @@
         .bar-track { flex: 1; background: #eef0f6; border-radius: 6px; height: 12px; overflow: hidden; }
         .bar-fill { height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); border-radius: 6px; }
         .bar-val { width: 34px; font-size: 0.85em; color: #333; font-weight: 600; }
+
+        .guide-intro { color: #444; font-size: 0.93em; margin-bottom: 14px; }
+        .guide-note { color: #4a5568; font-size: 0.86em; margin-top: 4px; line-height: 1.5; }
         
         .panel { display: none; }
         .panel.active { display: block; }
@@ -769,8 +772,7 @@
             </div>
 
             <div class="card">
-                <h2>Remote Client Guide</h2>
-                <p class="help-text" style="margin-bottom:14px;">Send this to the person at the far end. The commands below already point at this node — they can paste them as-is.</p>
+                <h2 id="iperf-guide-title">Remote Client Guide</h2>
                 <div id="iperf-guide">Loading...</div>
             </div>
         </div>
@@ -1922,6 +1924,7 @@
             const mode = document.getElementById('iperf-mode').value;
             document.getElementById('iperf-client-form').style.display = mode === 'client' ? 'block' : 'none';
             document.getElementById('iperf-server-form').style.display = mode === 'server' ? 'block' : 'none';
+            renderIperfGuide();
         }
         
         async function runIperf() {
@@ -1951,36 +1954,70 @@
         function renderIperfGuide() {
             const div = document.getElementById('iperf-guide');
             if (!div) return;
+            const mode = document.getElementById('iperf-mode')?.value || 'client';
             const host = window.location.hostname;
             const dlUrl = `${window.location.origin}/downloads/iperf3-win64.zip`;
-            const winSetup = `iwr ${dlUrl} -OutFile iperf3.zip; Expand-Archive iperf3.zip iperf3 -Force; cd iperf3; .\\iperf3.exe -c ${host}`;
-            const cmds = [
-                { label: 'Windows: one-paste setup + upload test (PowerShell)', cmd: winSetup, note: 'Downloads the client from this node, unpacks it, and runs the upload test — all in one paste. After this, run any command below as .\\iperf3.exe from the same window.' },
-                { label: 'Upload test (client → this node)', cmd: `iperf3 -c ${host}`, note: 'The basic test. Measures the sender’s upload toward this node. On Windows: .\\iperf3.exe' },
-                { label: 'Download test (this node → client)', cmd: `iperf3 -c ${host} -R`, note: 'Reverse mode: this node sends, the client receives.' },
-                { label: 'True line capacity (parallel streams)', cmd: `iperf3 -c ${host} -R -P 4`, note: 'A single stream is window-limited over distance; 4 parallel streams approximate real capacity. A big gap between this and the single-stream test points to latency, not a slow line.' },
-                { label: 'Both directions at once', cmd: `iperf3 -c ${host} --bidir`, note: 'Requires iperf3 3.7+. The client served by this node supports it.' },
-                { label: 'UDP jitter & loss (VoIP quality)', cmd: `iperf3 -c ${host} -u -b 10M`, note: 'Sends 10 Mbps of UDP and reports jitter and packet loss.' },
-            ];
-            div.innerHTML = `
-                <h3 style="margin-bottom:8px;">1 &middot; Get the client</h3>
+            const title = document.getElementById('iperf-guide-title');
+
+            const installTable = `
                 <table style="border-collapse:collapse;margin-bottom:16px;font-size:0.9em;">
-                    <tr><td style="padding:3px 14px 3px 0;color:#666;">Windows</td><td>Use the <strong>one-paste setup</strong> below (recommended) — or <a href="/downloads/iperf3-win64.zip">download iperf3 from this node</a> <span class="help-text">(iperf 3.21 win64, version-pinned and checksum-verified at build)</span></td></tr>
-                    <tr><td style="padding:3px 14px 3px 0;color:#666;">macOS</td><td><code>brew install iperf3</code></td></tr>
-                    <tr><td style="padding:3px 14px 3px 0;color:#666;">Linux</td><td><code>sudo apt install iperf3</code> (Debian/Ubuntu) &middot; <code>sudo dnf install iperf3</code> (RHEL/Fedora)</td></tr>
-                </table>
-                <h3 style="margin-bottom:8px;">2 &middot; Start the listener</h3>
-                <p class="help-text" style="margin-bottom:16px;">The engineer clicks <strong>Run iPerf3</strong> in Server mode above. The node then waits up to 5 minutes for one connection — run the client command within that window. One test per listener: restart it between runs.</p>
-                <h3 style="margin-bottom:8px;">3 &middot; Run a test</h3>
-                ${cmds.map(c => `
-                    <div style="margin-bottom:12px;">
-                        <div style="font-weight:600;font-size:0.9em;color:#444;margin-bottom:4px;">${c.label}</div>
-                        <div style="display:flex;gap:8px;align-items:center;">
-                            <code style="flex:1;background:#2d3748;color:#e2e8f0;padding:9px 12px;border-radius:6px;font-size:0.88em;overflow-x:auto;white-space:nowrap;">${_esc(c.cmd)}</code>
-                            <button class="btn btn-secondary" style="padding:7px 14px;flex-shrink:0;" data-cmd="${_esc(c.cmd)}" onclick="copyCmd(this)">Copy</button>
-                        </div>
-                        ${c.note ? `<div class="help-text" style="margin-top:3px;">${c.note}</div>` : ''}
-                    </div>`).join('')}`;
+                    <tr><td style="padding:3px 14px 3px 0;color:#555;">Windows</td><td>Use the <strong>one-paste setup</strong> below (recommended) — or <a href="/downloads/iperf3-win64.zip">download iperf3 from this node</a> (iperf 3.21 win64, version-pinned &amp; checksum-verified)</td></tr>
+                    <tr><td style="padding:3px 14px 3px 0;color:#555;">macOS</td><td><code>brew install iperf3</code></td></tr>
+                    <tr><td style="padding:3px 14px 3px 0;color:#555;">Linux</td><td><code>sudo apt install iperf3</code> (Debian/Ubuntu) &middot; <code>sudo dnf install iperf3</code> (RHEL/Fedora)</td></tr>
+                </table>`;
+
+            const cmdBlock = c => `
+                <div style="margin-bottom:12px;">
+                    <div style="font-weight:600;font-size:0.9em;color:#333;margin-bottom:4px;">${c.label}</div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <code style="flex:1;background:#2d3748;color:#e2e8f0;padding:9px 12px;border-radius:6px;font-size:0.88em;overflow-x:auto;white-space:nowrap;">${_esc(c.cmd)}</code>
+                        <button class="btn btn-secondary" style="padding:7px 14px;flex-shrink:0;" data-cmd="${_esc(c.cmd)}" onclick="copyCmd(this)">Copy</button>
+                    </div>
+                    ${c.note ? `<div class="guide-note">${c.note}</div>` : ''}
+                </div>`;
+
+            if (mode === 'server') {
+                if (title) title.textContent = 'Remote Client Guide';
+                const winSetup = `iwr ${dlUrl} -OutFile iperf3.zip; Expand-Archive iperf3.zip iperf3 -Force; cd iperf3; .\\iperf3.exe -c ${host}`;
+                const tcpCmds = [
+                    { label: 'Windows: one-paste setup + upload test (PowerShell)', cmd: winSetup, note: 'Downloads the client from this node, unpacks it, and runs the upload test in one paste. Run every other command below as .\\iperf3.exe from the same window.' },
+                    { label: 'Upload (client → this node)', cmd: `iperf3 -c ${host}`, note: 'Measures the sender’s upload toward this node.' },
+                    { label: 'Download (this node → client)', cmd: `iperf3 -c ${host} -R` },
+                    { label: 'True line capacity (4 parallel streams)', cmd: `iperf3 -c ${host} -R -P 4`, note: 'A single stream is window-limited over distance — a big gap between this and the single-stream test points to latency, not a slow line.' },
+                    { label: 'Both directions at once', cmd: `iperf3 -c ${host} --bidir`, note: 'Requires iperf3 3.7+ — the client served by this node supports it.' },
+                ];
+                const udpCmds = [
+                    { label: 'UDP upload quality (toward this node)', cmd: `iperf3 -c ${host} -u -b 10M`, note: 'Reports jitter and packet loss instead of raw speed.' },
+                    { label: 'UDP download quality', cmd: `iperf3 -c ${host} -u -b 10M -R` },
+                ];
+                div.innerHTML = `
+                    <p class="guide-intro">Send this to the person at the far end — the commands already point at this node, so they can paste them as-is.</p>
+                    <h3 style="margin-bottom:8px;">1 &middot; Get the client</h3>
+                    ${installTable}
+                    <h3 style="margin-bottom:8px;">2 &middot; Start the listener</h3>
+                    <p class="guide-note" style="margin-bottom:16px;">Click <strong>Run iPerf3</strong> above (Server mode). The node waits up to 5 minutes for one connection — one test per listener, restart it between runs.</p>
+                    <h3 style="margin-bottom:8px;">3 &middot; TCP throughput tests</h3>
+                    ${tcpCmds.map(cmdBlock).join('')}
+                    <h3 style="margin:18px 0 8px;">4 &middot; UDP quality tests (jitter &amp; loss)</h3>
+                    <p class="guide-note" style="margin-bottom:10px;">TCP measures <em>speed</em>; UDP measures <em>quality</em>. Set <code>-b</code> to the rate you want to validate — e.g. <code>-b 50M</code> to prove a 100&nbsp;Mbps circuit carries 50&nbsp;Mbps cleanly. Loss above ~1% or jitter above ~30&nbsp;ms degrades VoIP and video calls.</p>
+                    ${udpCmds.map(cmdBlock).join('')}`;
+            } else {
+                if (title) title.textContent = 'Remote Server Guide';
+                const winServer = `iwr ${dlUrl} -OutFile iperf3.zip; Expand-Archive iperf3.zip iperf3 -Force; cd iperf3; .\\iperf3.exe -s`;
+                const serverCmds = [
+                    { label: 'Windows: one-paste setup + start server (PowerShell)', cmd: winServer, note: 'Downloads the client from this node, unpacks it, and starts listening. Approve the Windows Firewall prompt when it appears.' },
+                    { label: 'macOS / Linux: start a server', cmd: 'iperf3 -s' },
+                ];
+                div.innerHTML = `
+                    <p class="guide-intro">In Client mode this node connects <strong>out</strong> to an iperf3 server at the far end. Send this to the person there.</p>
+                    <h3 style="margin-bottom:8px;">1 &middot; Get iperf3</h3>
+                    ${installTable}
+                    <h3 style="margin-bottom:8px;">2 &middot; Start a server at the far end</h3>
+                    ${serverCmds.map(cmdBlock).join('')}
+                    <p class="guide-note" style="margin-bottom:16px;">Port 5201 must be reachable from this node — if the far end is behind NAT, forward TCP/UDP 5201 to their machine.</p>
+                    <h3 style="margin-bottom:8px;">3 &middot; Run the test from here</h3>
+                    <p class="guide-note">Enter their address in <strong>Server Address</strong> above, pick TCP (throughput) or UDP (jitter/loss), and click <strong>Run iPerf3</strong>.</p>`;
+            }
         }
 
         function copyCmd(btn) {
