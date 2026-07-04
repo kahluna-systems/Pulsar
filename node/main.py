@@ -5,6 +5,7 @@ from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
+from typing import Optional
 import json
 import os
 import sys
@@ -540,13 +541,15 @@ async def speedtest_save_result(
 class OrgCreate(BaseModel):
     name: str
     org_type: str = "customer"
-    notes: str = None
+    # Optional[...] matters: clients send explicit nulls, and pydantic v2
+    # validates provided values (only omitted fields skip to the default).
+    notes: Optional[str] = None
 
 
 class CircuitCreate(BaseModel):
     label: str
-    target: str = None
-    notes: str = None
+    target: Optional[str] = None
+    notes: Optional[str] = None
 
 
 def _org_dict(o: Organization, circuits: list, tests_count: int = 0) -> dict:
@@ -676,8 +679,8 @@ async def delete_circuit(
 # ============== Customer Access Links & Portal ==============
 
 class AccessLinkCreate(BaseModel):
-    label: str = None
-    expires_days: int = None  # None = never expires
+    label: Optional[str] = None
+    expires_days: Optional[int] = None  # None = never expires
 
 
 def _link_dict(l: AccessLink, request: Request = None) -> dict:

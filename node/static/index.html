@@ -1357,7 +1357,7 @@
         function _flash(id, text, ok) {
             const el = document.getElementById(id);
             el.className = ok ? 'success-msg' : 'error-msg';
-            el.textContent = text;
+            if (typeof text !== 'string') text = JSON.stringify(text);  // 422 details arrive as objects
             el.style.display = 'block';
             setTimeout(() => { el.style.display = 'none'; }, 5000);
         }
