@@ -540,7 +540,7 @@ class CircuitCreate(BaseModel):
     notes: str = None
 
 
-def _org_dict(o: Organization, circuits: list) -> dict:
+def _org_dict(o: Organization, circuits: list, tests_count: int = 0) -> dict:
     return {
         "id": o.id,
         "name": o.name,
@@ -548,6 +548,7 @@ def _org_dict(o: Organization, circuits: list) -> dict:
         "notes": o.notes,
         "is_active": o.is_active,
         "created_at": o.created_at.isoformat() if o.created_at else None,
+        "tests_count": tests_count,
         "circuits": [
             {
                 "id": c.id,
@@ -576,7 +577,13 @@ async def list_orgs(
     by_org = {}
     for c in circuits:
         by_org.setdefault(c.org_id, []).append(c)
-    return [_org_dict(o, by_org.get(o.id, [])) for o in orgs]
+    from sqlalchemy import func
+    test_counts = dict(
+        db.query(TestResult.org_id, func.count(TestResult.id))
+        .filter(TestResult.org_id.isnot(None))
+        .group_by(TestResult.org_id).all()
+    )
+    return [_org_dict(o, by_org.get(o.id, []), test_counts.get(o.id, 0)) for o in orgs]
 
 
 @app.post("/api/orgs")

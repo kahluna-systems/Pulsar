@@ -839,30 +839,46 @@
         
         <!-- Customers Panel -->
         <div id="panel-tokens" class="panel">
-            <div class="card">
-                <h2>Organizations</h2>
-                <p class="help-text" style="margin-bottom:15px;">Customer and partner organizations served from this node. Circuits carry the registered endpoint that tests run against.</p>
-                <div id="org-msg" style="display:none;margin-bottom:10px;"></div>
-                <div id="org-list">Loading...</div>
-                <h3 style="margin-top:20px;">Add Organization</h3>
-                <div class="form-row" style="margin-top:10px;">
-                    <div class="form-group">
-                        <label>Name</label>
-                        <input type="text" id="org-name" placeholder="Acme Corp">
+            <div id="org-msg" style="display:none;margin-bottom:14px;"></div>
+            <div class="dash-grid" style="grid-template-columns:1fr 1.5fr;">
+                <div class="card">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                        <h2 style="margin:0;border:none;padding:0;">Organizations</h2>
+                        <button class="btn btn-primary" style="padding:7px 14px;" onclick="toggleAddOrg()">+ Add</button>
                     </div>
-                    <div class="form-group">
-                        <label>Type</label>
-                        <select id="org-type">
-                            <option value="customer">Customer</option>
-                            <option value="partner">Partner</option>
-                        </select>
+                    <div id="add-org-form" style="display:none;background:#f8f9fa;border:1px solid #e1e5e9;border-radius:8px;padding:14px;margin-bottom:14px;">
+                        <div class="form-group" style="margin-bottom:10px;">
+                            <label>Name</label>
+                            <input type="text" id="org-name" placeholder="Acme Corp">
+                        </div>
+                        <div class="form-row" style="margin-bottom:10px;">
+                            <div class="form-group" style="min-width:120px;">
+                                <label>Type</label>
+                                <select id="org-type">
+                                    <option value="customer">Customer</option>
+                                    <option value="partner">Partner</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="min-width:120px;">
+                                <label>Notes</label>
+                                <input type="text" id="org-notes" placeholder="Account #, contacts...">
+                            </div>
+                        </div>
+                        <button class="btn btn-primary" onclick="createOrg()">Create</button>
+                        <button class="btn btn-secondary" onclick="toggleAddOrg()">Cancel</button>
                     </div>
-                    <div class="form-group">
-                        <label>Notes (optional)</label>
-                        <input type="text" id="org-notes" placeholder="Account #, contacts...">
+                    <input type="text" id="org-search" oninput="renderOrgList()" placeholder="Search orgs, notes, circuits..."
+                           style="width:100%;padding:10px 12px;border:2px solid #e1e5e9;border-radius:8px;margin-bottom:10px;font-size:0.92em;">
+                    <div id="org-type-chips" style="display:flex;gap:6px;margin-bottom:12px;">
+                        <button class="btn btn-primary" data-type="all" onclick="setOrgTypeFilter('all')" style="padding:5px 14px;font-size:0.82em;">All</button>
+                        <button class="btn btn-secondary" data-type="customer" onclick="setOrgTypeFilter('customer')" style="padding:5px 14px;font-size:0.82em;">Customers</button>
+                        <button class="btn btn-secondary" data-type="partner" onclick="setOrgTypeFilter('partner')" style="padding:5px 14px;font-size:0.82em;">Partners</button>
                     </div>
+                    <div id="org-list" style="max-height:520px;overflow-y:auto;">Loading...</div>
                 </div>
-                <button class="btn btn-primary" onclick="createOrg()">Create Organization</button>
+                <div class="card" id="org-detail">
+                    <p style="color:#888;">Select an organization to view its circuits, tokens, and activity.</p>
+                </div>
             </div>
 
             <div class="card">
@@ -1091,41 +1107,116 @@
             }
         }
 
+        let _orgFilterType = 'all';
+        let _selectedOrgId = null;
+        let _tokensCache = [];
+
+        function toggleAddOrg() {
+            const f = document.getElementById('add-org-form');
+            f.style.display = f.style.display === 'none' ? 'block' : 'none';
+        }
+
+        function setOrgTypeFilter(t) {
+            _orgFilterType = t;
+            document.querySelectorAll('#org-type-chips button').forEach(b => {
+                b.classList.toggle('btn-primary', b.dataset.type === t);
+                b.classList.toggle('btn-secondary', b.dataset.type !== t);
+            });
+            renderOrgList();
+        }
+
         async function loadOrgs() {
-            const div = document.getElementById('org-list');
             try {
                 const resp = await fetch('/api/orgs');
-                if (!resp.ok) { div.textContent = 'Unable to load organizations.'; return; }
+                if (!resp.ok) { document.getElementById('org-list').textContent = 'Unable to load organizations.'; return; }
                 _orgsCache = await resp.json();
                 _populateOrgSelects();
-                if (!_orgsCache.length) {
-                    div.innerHTML = '<p style="color:#888;">No organizations yet — add your first customer below.</p>';
-                    return;
-                }
-                div.innerHTML = _orgsCache.map(o => `
-                    <div style="border:1px solid #e1e5e9;border-radius:8px;padding:15px;margin-bottom:10px;">
-                        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-                            <div>
-                                <strong>${_esc(o.name)}</strong>
-                                <span class="status-badge ${o.org_type === 'partner' ? 'status-running' : 'status-completed'}">${_esc(o.org_type)}</span>
-                                ${o.notes ? `<br><small style="color:#666;">${_esc(o.notes)}</small>` : ''}
-                            </div>
-                            <button class="btn btn-danger" onclick="deleteOrg(${o.id})">Delete</button>
-                        </div>
-                        <div style="margin-top:12px;">
-                            ${o.circuits.map(c => `
-                                <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:#f8f9fa;border-radius:6px;margin-bottom:6px;">
-                                    <div><code>${_esc(c.label)}</code> ${c.target ? `&rarr; ${_esc(c.target)}` : '<span style="color:#888;">(no registered endpoint)</span>'}</div>
-                                    <button class="btn btn-secondary" onclick="deleteCircuit(${c.id}, ${o.id})">Remove</button>
-                                </div>`).join('')}
-                            <div style="display:flex;gap:8px;margin-top:8px;">
-                                <input type="text" id="circ-label-${o.id}" placeholder="Circuit ID (e.g. CLT-0042)" style="flex:1;padding:8px;border:1px solid #e1e5e9;border-radius:6px;">
-                                <input type="text" id="circ-target-${o.id}" placeholder="Endpoint IP/hostname (optional)" style="flex:1;padding:8px;border:1px solid #e1e5e9;border-radius:6px;">
-                                <button class="btn btn-primary" onclick="addCircuit(${o.id})">Add Circuit</button>
-                            </div>
-                        </div>
-                    </div>`).join('');
-            } catch (e) { div.textContent = 'Unable to load organizations.'; }
+                renderOrgList();
+                renderOrgDetail();
+            } catch (e) { document.getElementById('org-list').textContent = 'Unable to load organizations.'; }
+        }
+
+        function renderOrgList() {
+            const div = document.getElementById('org-list');
+            if (!div) return;
+            const q = (document.getElementById('org-search')?.value || '').trim().toLowerCase();
+            const rows = _orgsCache.filter(o => {
+                if (_orgFilterType !== 'all' && o.org_type !== _orgFilterType) return false;
+                if (!q) return true;
+                const hay = [o.name, o.notes || '', ...o.circuits.map(c => c.label + ' ' + (c.target || ''))].join(' ').toLowerCase();
+                return hay.includes(q);
+            });
+            if (!_orgsCache.length) { div.innerHTML = '<p style="color:#888;">No organizations yet — click <strong>+ Add</strong> to create your first.</p>'; return; }
+            if (!rows.length) { div.innerHTML = '<p style="color:#888;">No matches for this search/filter.</p>'; return; }
+            div.innerHTML = rows.map(o => `
+                <div onclick="selectOrg(${o.id})" style="padding:12px 14px;border:1px solid ${o.id === _selectedOrgId ? '#667eea' : '#e1e5e9'};${o.id === _selectedOrgId ? 'background:#f5f6ff;box-shadow:inset 3px 0 0 #667eea;' : ''}border-radius:8px;margin-bottom:8px;cursor:pointer;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <strong>${_esc(o.name)}</strong>
+                        <span class="status-badge ${o.org_type === 'partner' ? 'status-running' : 'status-completed'}">${_esc(o.org_type)}</span>
+                    </div>
+                    <small style="color:#888;">${o.circuits.length} circuit${o.circuits.length === 1 ? '' : 's'} &middot; ${o.tests_count} test${o.tests_count === 1 ? '' : 's'}</small>
+                </div>`).join('');
+        }
+
+        function selectOrg(id) {
+            _selectedOrgId = id;
+            renderOrgList();
+            renderOrgDetail();
+        }
+
+        function renderOrgDetail() {
+            const div = document.getElementById('org-detail');
+            if (!div) return;
+            const o = _orgsCache.find(x => x.id === _selectedOrgId);
+            if (!o) {
+                div.innerHTML = '<p style="color:#888;">Select an organization to view its circuits, tokens, and activity.</p>';
+                return;
+            }
+            const orgTokens = _tokensCache.filter(t => t.org_id === o.id);
+            div.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                    <div>
+                        <h2 style="margin:0;border:none;padding:0;display:inline;">${_esc(o.name)}</h2>
+                        <span class="status-badge ${o.org_type === 'partner' ? 'status-running' : 'status-completed'}" style="margin-left:8px;">${_esc(o.org_type)}</span>
+                    </div>
+                    <button class="btn btn-danger" onclick="deleteOrg(${o.id})">Delete</button>
+                </div>
+                ${o.notes ? `<p style="color:#666;font-size:0.9em;margin-top:6px;">${_esc(o.notes)}</p>` : ''}
+                <p style="color:#999;font-size:0.82em;margin:6px 0 16px;">Created ${o.created_at ? new Date(o.created_at).toLocaleDateString() : '—'} &middot; ${o.tests_count} test${o.tests_count === 1 ? '' : 's'} recorded</p>
+                <div style="display:flex;gap:8px;margin-bottom:22px;flex-wrap:wrap;">
+                    <button class="btn btn-secondary" onclick="viewOrgHistory(${o.id})">View Test History →</button>
+                    <button class="btn btn-secondary" onclick="prepOrgToken(${o.id})">New Test Token</button>
+                </div>
+                <h3 style="margin-bottom:10px;">Circuits</h3>
+                ${o.circuits.length ? o.circuits.map(c => `
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#f8f9fa;border-radius:6px;margin-bottom:6px;">
+                        <div><code>${_esc(c.label)}</code> ${c.target ? `&rarr; ${_esc(c.target)}` : '<span style="color:#888;">(no registered endpoint)</span>'}</div>
+                        <button class="btn btn-secondary" onclick="deleteCircuit(${c.id}, ${o.id})">Remove</button>
+                    </div>`).join('') : '<p style="color:#888;font-size:0.9em;">No circuits yet.</p>'}
+                <div style="display:flex;gap:8px;margin-top:10px;margin-bottom:22px;">
+                    <input type="text" id="circ-label-${o.id}" placeholder="Circuit ID (e.g. CLT-0042)" style="flex:1;padding:8px;border:2px solid #e1e5e9;border-radius:6px;">
+                    <input type="text" id="circ-target-${o.id}" placeholder="Endpoint IP/hostname (optional)" style="flex:1;padding:8px;border:2px solid #e1e5e9;border-radius:6px;">
+                    <button class="btn btn-primary" onclick="addCircuit(${o.id})">Add</button>
+                </div>
+                <h3 style="margin-bottom:10px;">Test Tokens</h3>
+                ${orgTokens.length ? orgTokens.map(t => `
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#f8f9fa;border-radius:6px;margin-bottom:6px;${t.expired || t.exhausted ? 'opacity:0.55;' : ''}">
+                        <div><strong>${_esc(t.customer_id || 'no ID')}</strong> <small style="color:#888;">uses ${t.use_count}/${t.max_uses} &middot; expires ${new Date(t.expires_at).toLocaleDateString()}</small></div>
+                        <span class="status-badge ${t.expired ? 'status-failed' : (t.exhausted ? 'status-running' : 'status-completed')}">${t.expired ? 'expired' : (t.exhausted ? 'used up' : 'active')}</span>
+                    </div>`).join('') : '<p style="color:#888;font-size:0.9em;">No tokens for this organization.</p>'}`;
+        }
+
+        function viewOrgHistory(orgId) {
+            showPanel('history');
+            const sel = document.getElementById('history-org');
+            if (sel) { sel.value = String(orgId); loadHistory(); }
+        }
+
+        function prepOrgToken(orgId) {
+            const sel = document.getElementById('token-org');
+            if (sel) sel.value = String(orgId);
+            const cust = document.getElementById('token-customer');
+            if (cust) { cust.scrollIntoView({ behavior: 'smooth', block: 'center' }); cust.focus(); }
         }
 
         async function createOrg() {
@@ -1137,9 +1228,12 @@
                 body: JSON.stringify({ name, org_type, notes })
             });
             if (resp.ok) {
+                const created = await resp.json();
                 _flash('org-msg', `Organization "${name}" created.`, true);
                 document.getElementById('org-name').value = '';
                 document.getElementById('org-notes').value = '';
+                document.getElementById('add-org-form').style.display = 'none';
+                _selectedOrgId = created.id;
                 loadOrgs();
             } else {
                 const err = await resp.json().catch(() => ({}));
@@ -1786,7 +1880,9 @@
         async function loadTokens() {
             const resp = await fetch('/api/tokens');
             const tokens = await resp.json();
-            
+            _tokensCache = Array.isArray(tokens) ? tokens : [];
+            renderOrgDetail();
+
             const div = document.getElementById('token-list');
             if (!tokens.length) {
                 div.innerHTML = '<p>No tokens created yet</p>';
