@@ -767,8 +767,14 @@
                 <button class="btn btn-primary" onclick="runIperf()" id="btn-iperf">Run iPerf3</button>
                 <div id="iperf-result" class="result-box" style="display:none;"></div>
             </div>
+
+            <div class="card">
+                <h2>Remote Client Guide</h2>
+                <p class="help-text" style="margin-bottom:14px;">Send this to the person at the far end. The commands below already point at this node — they can paste them as-is.</p>
+                <div id="iperf-guide">Loading...</div>
+            </div>
         </div>
-        
+
         <!-- Packet Capture Panel -->
         <div id="panel-capture" class="panel">
             <div class="card">
@@ -1023,6 +1029,7 @@
             loadTokens();
             loadOrgs();
             loadPingSessions();
+            renderIperfGuide();
         });
         
         async function loadNodeInfo() {
@@ -1941,6 +1948,45 @@
             displayIperfResult(result);
         }
         
+        function renderIperfGuide() {
+            const div = document.getElementById('iperf-guide');
+            if (!div) return;
+            const host = window.location.hostname;
+            const cmds = [
+                { label: 'Upload test (client → this node)', cmd: `iperf3 -c ${host}`, note: 'The basic test. Measures the sender’s upload toward this node.' },
+                { label: 'Download test (this node → client)', cmd: `iperf3 -c ${host} -R`, note: 'Reverse mode: this node sends, the client receives.' },
+                { label: 'True line capacity (parallel streams)', cmd: `iperf3 -c ${host} -R -P 4`, note: 'A single stream is window-limited over distance; 4 parallel streams approximate real capacity. A big gap between this and the single-stream test points to latency, not a slow line.' },
+                { label: 'Both directions at once', cmd: `iperf3 -c ${host} --bidir`, note: 'Requires iperf3 3.7 or newer (see downloads above — older Windows builds don’t have it).' },
+                { label: 'UDP jitter & loss (VoIP quality)', cmd: `iperf3 -c ${host} -u -b 10M`, note: 'Sends 10 Mbps of UDP and reports jitter and packet loss.' },
+            ];
+            div.innerHTML = `
+                <h3 style="margin-bottom:8px;">1 &middot; Install iperf3</h3>
+                <table style="border-collapse:collapse;margin-bottom:16px;font-size:0.9em;">
+                    <tr><td style="padding:3px 14px 3px 0;color:#666;">Windows</td><td><a href="https://github.com/ar51an/iperf3-win-builds/releases" target="_blank" rel="noopener">github.com/ar51an/iperf3-win-builds</a> <span class="help-text">(current builds; unzip, then run commands from that folder — prefix with <code>.\\</code>, e.g. <code>.\\iperf3.exe ...</code>)</span></td></tr>
+                    <tr><td style="padding:3px 14px 3px 0;color:#666;">macOS</td><td><code>brew install iperf3</code></td></tr>
+                    <tr><td style="padding:3px 14px 3px 0;color:#666;">Linux</td><td><code>sudo apt install iperf3</code> (Debian/Ubuntu) &middot; <code>sudo dnf install iperf3</code> (RHEL/Fedora)</td></tr>
+                </table>
+                <h3 style="margin-bottom:8px;">2 &middot; Start the listener</h3>
+                <p class="help-text" style="margin-bottom:16px;">The engineer clicks <strong>Run iPerf3</strong> in Server mode above. The node then waits up to 5 minutes for one connection — run the client command within that window. One test per listener: restart it between runs.</p>
+                <h3 style="margin-bottom:8px;">3 &middot; Run a test</h3>
+                ${cmds.map(c => `
+                    <div style="margin-bottom:12px;">
+                        <div style="font-weight:600;font-size:0.9em;color:#444;margin-bottom:4px;">${c.label}</div>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <code style="flex:1;background:#2d3748;color:#e2e8f0;padding:9px 12px;border-radius:6px;font-size:0.88em;overflow-x:auto;white-space:nowrap;">${_esc(c.cmd)}</code>
+                            <button class="btn btn-secondary" style="padding:7px 14px;flex-shrink:0;" data-cmd="${_esc(c.cmd)}" onclick="copyCmd(this)">Copy</button>
+                        </div>
+                        ${c.note ? `<div class="help-text" style="margin-top:3px;">${c.note}</div>` : ''}
+                    </div>`).join('')}`;
+        }
+
+        function copyCmd(btn) {
+            navigator.clipboard.writeText(btn.dataset.cmd);
+            const orig = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = orig; }, 1500);
+        }
+
         function displayIperfResult(result) {
             const div = document.getElementById('iperf-result');
             if (result.error || result.result?.error) {
