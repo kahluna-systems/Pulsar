@@ -126,9 +126,14 @@ class IperfRunner:
             end = parsed.get("end", {})
             connected = (start.get("connected") or [{}])[0]
             # Server perspective: sum_received = client -> server (client upload),
-            # sum_sent = server -> client (only nonzero for -R / --bidir sessions).
+            # sum_sent = server -> client for -R sessions. In --bidir sessions the
+            # server->client direction is reported separately as
+            # sum_sent_bidir_reverse (sum_sent stays 0 on the server side).
             sum_recv = end.get("sum_received") or end.get("sum") or {}
             sum_sent = end.get("sum_sent") or {}
+            bidir_reverse = end.get("sum_sent_bidir_reverse")
+            if not sum_sent.get("bytes") and bidir_reverse and bidir_reverse.get("bytes"):
+                sum_sent = bidir_reverse
             return {
                 "mode": "server",
                 "port": port,
