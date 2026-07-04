@@ -899,6 +899,7 @@ async def stream_mtr(target: str, max_hops: int = 30, protocol: str = "icmp", to
         # Track cumulative stats per hop keyed by position index
         hop_stats = {}  # position (int) -> {hop, ip, hostname, sent, received, rtts}
         hostnames = {}  # ip -> hostname (resolved once on first cycle)
+        hops_snapshot = []  # last emitted snapshot; persisted in finally
         cancel_event = asyncio.Event()
         _active_mtr_sessions[session_id] = cancel_event
 
@@ -1021,19 +1022,6 @@ async def stream_mtr(target: str, max_hops: int = 30, protocol: str = "icmp", to
                 except asyncio.TimeoutError:
                     pass  # Continue next cycle
 
-            # Persist the completed MTR run to history (best-effort)
-            try:
-                if hops_snapshot:
-                    _persist_result(
-                        "mtr",
-                        {"target": target, "protocol": protocol, "max_hops": max_hops},
-                        {"target": target, "resolved_ip": resolved_ip, "hops": hops_snapshot},
-                        org_id=org_id,
-                        circuit_id=circuit_id,
-                    )
-            except Exception:
-                pass
-
             # Final event
             yield f"data: {json.dumps({'complete': True})}\n\n"
 
@@ -1042,6 +1030,17 @@ async def stream_mtr(target: str, max_hops: int = 30, protocol: str = "icmp", to
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
         finally:
+            # Persist in finally so the run is saved on every exit path —
+            # including client disconnect (EventSource close cancels the
+            # generator before the in-loop code can reach a save).
+            if hops_snapshot:
+                _persist_result(
+                    "mtr",
+                    {"target": target, "protocol": protocol, "max_hops": max_hops},
+                    {"target": target, "resolved_ip": resolved_ip, "hops": hops_snapshot},
+                    org_id=org_id,
+                    circuit_id=circuit_id,
+                )
             _active_mtr_sessions.pop(session_id, None)
 
     return StreamingResponse(
