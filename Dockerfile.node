@@ -43,7 +43,7 @@ RUN chown -R appuser:appuser /app
 
 # Set capabilities for network tools
 RUN setcap cap_net_raw+ep "$(command -v ping)" || true; \
-    setcap cap_net_raw+ep "$(command -v traceroute)" || true; \
+    setcap cap_net_raw+ep "$(readlink -f "$(command -v traceroute)")" || true; \
     setcap cap_net_raw,cap_net_admin+ep "$(command -v tcpdump)" || true; \
     setcap cap_net_raw+ep "$(command -v mtr-packet)" || true
 

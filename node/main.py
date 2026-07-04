@@ -823,7 +823,10 @@ async def portal_run_test(
         raise HTTPException(status_code=400, detail="This circuit has no registered test endpoint — contact your provider")
 
     config = {"target": circuit.target, "max_hops": 30}
-    if test_type == "mtr":
+    if test_type == "traceroute":
+        # UDP is unprivileged and reliable; ICMP mode needs cap_net_raw.
+        config["protocol"] = "udp"
+    elif test_type == "mtr":
         config["count"] = 10
 
     test_result = TestResult(
