@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Test Portal</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; min-height: 100vh; }
+        .hero {
+            background: linear-gradient(135deg, #1e1b4b 0%, #4c1d95 100%);
+            color: white;
+            padding: 34px 24px 30px;
+            text-align: center;
+        }
+        .hero h1 { font-size: 1.5em; font-weight: 600; }
+        .hero .sub { opacity: 0.8; font-size: 0.92em; margin-top: 6px; }
+        .wrap { max-width: 860px; margin: 0 auto; padding: 22px 18px 60px; }
+        .card {
+            background: white; border-radius: 12px; padding: 22px;
+            margin-bottom: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .card h2 { font-size: 1.05em; color: #333; margin-bottom: 14px; padding-bottom: 8px; border-bottom: 2px solid #667eea; }
+        .circuit {
+            display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
+            padding: 13px 15px; border: 1px solid #e1e5e9; border-radius: 8px; margin-bottom: 10px;
+        }
+        .circuit code { font-size: 1em; font-weight: 600; color: #1f2340; }
+        .btn {
+            padding: 9px 18px; border: none; border-radius: 6px; cursor: pointer;
+            font-weight: 500; font-size: 0.9em; transition: all 0.15s;
+        }
+        .btn-primary { background: #667eea; color: white; }
+        .btn-primary:hover { background: #5a6fd6; }
+        .btn-secondary { background: #eef0f6; color: #333; }
+        .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+        .note { color: #4a5568; font-size: 0.86em; }
+        .error-box { background: #f8d7da; color: #721c24; padding: 14px 16px; border-radius: 8px; }
+        .success-box { background: #d4edda; color: #155724; padding: 12px 14px; border-radius: 8px; margin-bottom: 12px; }
+        .running { color: #856404; background: #fff3cd; padding: 10px 14px; border-radius: 8px; margin-top: 12px; font-size: 0.9em; }
+        table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eef0f6; font-size: 0.9em; }
+        th { color: #555; background: #f8f9fa; }
+        .badge { padding: 3px 10px; border-radius: 20px; font-size: 0.78em; font-weight: 500; }
+        .b-ok { background: #d4edda; color: #155724; }
+        .b-run { background: #fff3cd; color: #856404; }
+        .b-fail { background: #f8d7da; color: #721c24; }
+        .hist-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border: 1px solid #eef0f6; border-radius: 8px; margin-bottom: 8px; cursor: pointer; }
+        .hist-item:hover { background: #f8f9fa; }
+        .footer { text-align: center; color: #999; font-size: 0.8em; margin-top: 26px; }
+    </style>
+</head>
+<body>
+    <div class="hero">
+        <h1 id="hero-title">Network Test Portal</h1>
+        <div class="sub" id="hero-sub">Loading&hellip;</div>
+    </div>
+    <div class="wrap">
+        <div id="content"><div class="card"><p class="note">Loading your portal&hellip;</p></div></div>
+        <div class="footer">Powered by KahLuna Pulsar</div>
+    </div>
+
+    <script>
+    (function () {
+        const KEY = new URLSearchParams(location.search).get('key') || '';
+        const content = document.getElementById('content');
+        let INFO = null;
+
+        function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+        function fail(msg) {
+            document.getElementById('hero-sub').textContent = '';
+            content.innerHTML = `<div class="card"><div class="error-box">${esc(msg)}</div>
+                <p class="note" style="margin-top:12px;">If you believe this is a mistake, contact your service provider for a new link.</p></div>`;
+        }
+
+        async function api(path) {
+            const resp = await fetch(path);
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || 'Request failed');
+            }
+            return resp.json();
+        }
+
+        function badge(status) {
+            const cls = status === 'completed' ? 'b-ok' : (status === 'running' ? 'b-run' : 'b-fail');
+            return `<span class="badge ${cls}">${esc(status)}</span>`;
+        }
+
+        function hopTable(hops) {
+            if (!Array.isArray(hops) || !hops.length) return '<p class="note">No hop data returned.</p>';
+            return `<table><thead><tr><th>Hop</th><th>Host</th><th>Loss</th><th>Avg RTT</th></tr></thead><tbody>
+                ${hops.map(h => `<tr>
+                    <td>${esc(h.hop)}</td>
+                    <td>${esc(h.hostname || h.ip || '*')}</td>
+                    <td>${h.loss_percent != null ? esc(h.loss_percent) + '%' : '—'}</td>
+                    <td>${h.rtt_avg != null ? esc(h.rtt_avg) + ' ms' : (h.rtt_ms != null ? esc(h.rtt_ms) + ' ms' : '* * *')}</td>
+                </tr>`).join('')}</tbody></table>`;
+        }
+
+        function renderResult(test) {
+            const r = test.result || {};
+            if (r.error) return `<div class="error-box" style="margin-top:12px;">${esc(r.error)}</div>`;
+            return hopTable(r.hops);
+        }
+
+        async function pollTest(id, box) {
+            for (let i = 0; i < 60; i++) {
+                await new Promise(r => setTimeout(r, 2000));
+                const t = await api(`/api/portal/tests/${id}?key=${encodeURIComponent(KEY)}`);
+                if (t.status !== 'running') {
+                    box.innerHTML = t.status === 'completed'
+                        ? `<div class="success-box">Test complete</div>${renderResult(t)}`
+                        : `<div class="error-box">Test ${esc(t.status)}</div>`;
+                    loadHistory();
+                    return;
+                }
+            }
+            box.innerHTML = '<div class="error-box">Test timed out — try again.</div>';
+        }
+
+        window.runTest = async function (circuitId, testType, btn) {
+            const box = document.getElementById(`result-${circuitId}`);
+            box.innerHTML = `<div class="running">Running ${esc(testType)}&hellip; this can take up to a minute.</div>`;
+            btn.disabled = true;
+            try {
+                const resp = await fetch('/api/portal/test', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key: KEY, circuit_id: circuitId, test_type: testType })
+                });
+                const data = await resp.json();
+                if (!resp.ok) { box.innerHTML = `<div class="error-box">${esc(data.detail || 'Could not start the test')}</div>`; return; }
+                await pollTest(data.id, box);
+            } catch (e) {
+                box.innerHTML = `<div class="error-box">${esc(e.message)}</div>`;
+            } finally {
+                btn.disabled = false;
+            }
+        };
+
+        window.viewTest = async function (id) {
+            const box = document.getElementById('hist-detail');
+            box.innerHTML = '<p class="note">Loading&hellip;</p>';
+            try {
+                const t = await api(`/api/portal/tests/${id}?key=${encodeURIComponent(KEY)}`);
+                box.innerHTML = `<p class="note" style="margin-bottom:4px;"><strong>#${t.id}</strong> &middot; ${esc(t.test_type)} &middot; ${new Date(t.created_at).toLocaleString()} ${badge(t.status)}</p>${renderResult(t)}`;
+            } catch (e) { box.innerHTML = `<div class="error-box">${esc(e.message)}</div>`; }
+        };
+
+        async function loadHistory() {
+            try {
+                const tests = await api(`/api/portal/tests?key=${encodeURIComponent(KEY)}`);
+                const div = document.getElementById('history');
+                div.innerHTML = tests.length ? tests.slice(0, 15).map(t => `
+                    <div class="hist-item" onclick="viewTest(${t.id})">
+                        <div><strong>${esc(t.test_type)}</strong>${t.circuit_label ? ` &middot; <code>${esc(t.circuit_label)}</code>` : ''}<br>
+                            <span class="note">${new Date(t.created_at).toLocaleString()}</span></div>
+                        ${badge(t.status)}
+                    </div>`).join('') : '<p class="note">No tests yet — run one above.</p>';
+            } catch (e) { /* keep whatever is shown */ }
+        }
+
+        async function init() {
+            if (!KEY) { fail('No access key provided.'); return; }
+            try {
+                INFO = await api(`/api/portal/info?key=${encodeURIComponent(KEY)}`);
+            } catch (e) { fail(e.message); return; }
+
+            document.getElementById('hero-title').textContent = `${INFO.org_name} — Network Test Portal`;
+            document.getElementById('hero-sub').textContent = `Served by ${INFO.node_name}`;
+
+            content.innerHTML = `
+                <div class="card">
+                    <h2>Speed Test</h2>
+                    <p class="note" style="margin-bottom:12px;">Measures your connection to the test node. Results are shared with your provider automatically.</p>
+                    <button class="btn btn-primary" onclick="window.open('/speedtest?token=${encodeURIComponent(KEY)}','_blank')">Open Speed Test &rarr;</button>
+                </div>
+                <div class="card">
+                    <h2>Your Circuits</h2>
+                    ${INFO.circuits.length ? INFO.circuits.map(c => `
+                        <div class="circuit">
+                            <code>${esc(c.label)}</code>
+                            <div style="display:flex;gap:8px;">
+                                <button class="btn btn-primary" ${c.has_target ? '' : 'disabled title="No test endpoint registered"'} onclick="runTest(${c.id}, 'traceroute', this)">Trace Path</button>
+                                <button class="btn btn-secondary" ${c.has_target ? '' : 'disabled title="No test endpoint registered"'} onclick="runTest(${c.id}, 'mtr', this)">Path Quality (MTR)</button>
+                            </div>
+                            <div id="result-${c.id}" style="width:100%;"></div>
+                        </div>`).join('') : '<p class="note">No circuits registered yet — contact your provider.</p>'}
+                </div>
+                <div class="card">
+                    <h2>Recent Tests</h2>
+                    <div id="history"><p class="note">Loading&hellip;</p></div>
+                    <div id="hist-detail" style="margin-top:14px;"></div>
+                </div>`;
+            loadHistory();
+        }
+
+        init();
+    })();
+    </script>
+</body>
+</html>

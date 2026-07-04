@@ -1171,6 +1171,51 @@
             _selectedOrgId = id;
             renderOrgList();
             renderOrgDetail();
+            loadOrgLinks();
+        }
+
+        let _orgLinksCache = [];
+        async function loadOrgLinks() {
+            _orgLinksCache = [];
+            if (_selectedOrgId == null) return;
+            try {
+                const resp = await fetch(`/api/orgs/${_selectedOrgId}/links`);
+                if (resp.ok) _orgLinksCache = await resp.json();
+            } catch (e) { /* section renders empty */ }
+            renderOrgDetail();
+        }
+
+        async function createAccessLink() {
+            const label = document.getElementById('link-label').value.trim() || null;
+            const days = parseInt(document.getElementById('link-expiry').value) || null;
+            const resp = await fetch(`/api/orgs/${_selectedOrgId}/links`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ label, expires_days: days })
+            });
+            if (resp.ok) {
+                const l = await resp.json();
+                try { await navigator.clipboard.writeText(l.portal_url); } catch (e) {}
+                _flash('org-msg', 'Access link created — portal URL copied to clipboard.', true);
+                loadOrgLinks();
+            } else {
+                const err = await resp.json().catch(() => ({}));
+                _flash('org-msg', err.detail || 'Failed to create access link', false);
+            }
+        }
+
+        async function revokeAccessLink(id) {
+            if (!confirm('Revoke this access link? The customer loses access immediately.')) return;
+            const resp = await fetch(`/api/links/${id}`, { method: 'DELETE' });
+            const err = await resp.json().catch(() => ({}));
+            _flash('org-msg', resp.ok ? 'Access link revoked.' : (err.detail || 'Revoke failed'), resp.ok);
+            if (resp.ok) loadOrgLinks();
+        }
+
+        function copyLinkUrl(btn) {
+            navigator.clipboard.writeText(btn.dataset.url);
+            const orig = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = orig; }, 1500);
         }
 
         function renderOrgDetail() {
@@ -1206,6 +1251,30 @@
                     <input type="text" id="circ-label-${o.id}" placeholder="Circuit ID (e.g. CLT-0042)" style="flex:1;padding:8px;border:2px solid #e1e5e9;border-radius:6px;">
                     <input type="text" id="circ-target-${o.id}" placeholder="Endpoint IP/hostname (optional)" style="flex:1;padding:8px;border:2px solid #e1e5e9;border-radius:6px;">
                     <button class="btn btn-primary" onclick="addCircuit(${o.id})">Add</button>
+                </div>
+                <h3 style="margin-bottom:10px;">Portal Access Links</h3>
+                <p class="guide-note" style="margin-bottom:10px;">A revocable link that opens the customer portal: they can run tests against their own circuits and see their own history — no account needed.</p>
+                ${_orgLinksCache.length ? _orgLinksCache.map(l => `
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#f8f9fa;border-radius:6px;margin-bottom:6px;${!l.is_active || l.expired ? 'opacity:0.55;' : ''}">
+                        <div>
+                            <strong>${_esc(l.label || 'Access link')}</strong>
+                            <span class="status-badge ${!l.is_active ? 'status-failed' : (l.expired ? 'status-running' : 'status-completed')}">${!l.is_active ? 'revoked' : (l.expired ? 'expired' : 'active')}</span><br>
+                            <small style="color:#777;">${l.expires_at ? 'expires ' + new Date(l.expires_at).toLocaleDateString() : 'no expiry'} &middot; ${l.last_used_at ? 'last used ' + new Date(l.last_used_at).toLocaleString() : 'never used'}</small>
+                        </div>
+                        <div style="display:flex;gap:8px;">
+                            ${l.is_active && !l.expired ? `<button class="btn btn-secondary" data-url="${_esc(l.portal_url)}" onclick="copyLinkUrl(this)">Copy URL</button>
+                            <button class="btn btn-danger" onclick="revokeAccessLink(${l.id})">Revoke</button>` : ''}
+                        </div>
+                    </div>`).join('') : '<p style="color:#888;font-size:0.9em;">No access links yet.</p>'}
+                <div style="display:flex;gap:8px;margin-top:10px;margin-bottom:22px;">
+                    <input type="text" id="link-label" placeholder="Label (e.g. NOC contact, ticket #)" style="flex:1;padding:8px;border:2px solid #e1e5e9;border-radius:6px;">
+                    <select id="link-expiry" style="padding:8px;border:2px solid #e1e5e9;border-radius:6px;">
+                        <option value="">Never expires</option>
+                        <option value="7">7 days</option>
+                        <option value="30">30 days</option>
+                        <option value="90">90 days</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="createAccessLink()">Generate Link</button>
                 </div>
                 <h3 style="margin-bottom:10px;">Test Tokens</h3>
                 ${orgTokens.length ? orgTokens.map(t => `

@@ -37,6 +37,22 @@ class Circuit(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class AccessLink(Base):
+    """Org-scoped revocable portal access link (edge customer access is
+    token-based by design — see kahluna-docs Deployment Philosophy)."""
+    __tablename__ = "access_links"
+
+    id = Column(Integer, primary_key=True, index=True)
+    org_id = Column(Integer, index=True, nullable=False)
+    key = Column(String(100), unique=True, nullable=False, index=True)
+    label = Column(String(255))
+    is_active = Column(Boolean, default=True)
+    expires_at = Column(DateTime)  # null = no expiry
+    created_by = Column(String(50))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_used_at = Column(DateTime)
+
+
 class TestResult(Base):
     """Local test results storage."""
     __tablename__ = "test_results"

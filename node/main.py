@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import os
 import sys
@@ -14,7 +14,7 @@ import asyncio
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from .config import get_config, NodeConfig, save_config, set_config, _ENV_MAP
-from .database import get_db, init_db, TestResult, CustomerToken, User, Organization, Circuit
+from .database import get_db, init_db, TestResult, CustomerToken, User, Organization, Circuit, AccessLink
 from .auth import (
     get_current_user, get_optional_user, require_role,
     create_access_token, create_refresh_token, authenticate_user,
@@ -31,7 +31,7 @@ from shared.models import (
     TestType, TestStatus, LoginRequest, TokenResponse,
     CustomerTokenCreate, CustomerTokenResponse, TestRequest
 )
-from shared.utils import get_client_ip, RateLimiter, verify_password, hash_password
+from shared.utils import get_client_ip, RateLimiter, verify_password, hash_password, generate_token
 from pydantic import BaseModel
 
 # Initialize app
@@ -53,6 +53,7 @@ app.add_middleware(
 # Rate limiters
 speedtest_limiter = RateLimiter(max_requests=10, window_seconds=60)
 api_limiter = RateLimiter(max_requests=100, window_seconds=60)
+portal_test_limiter = RateLimiter(max_requests=10, window_seconds=600)  # per access-link key
 
 # Runner instances
 speedtest_runner = SpeedTestRunner()
@@ -504,6 +505,14 @@ async def speedtest_save_result(
         if token:
             customer_id = token.customer_id
             token_org_id = token.org_id
+        else:
+            # Portal access links double as speed-test attribution keys
+            # (the portal links to /speedtest?token=<link key>).
+            portal = db.query(AccessLink).filter(
+                AccessLink.key == token_str, AccessLink.is_active == True
+            ).first()
+            if portal and not (portal.expires_at and portal.expires_at < datetime.utcnow()):
+                token_org_id = portal.org_id
 
     test_result = TestResult(
         test_type="speedtest_customer",
@@ -662,6 +671,208 @@ async def delete_circuit(
     db.delete(circuit)
     db.commit()
     return {"deleted": circuit.label}
+
+
+# ============== Customer Access Links & Portal ==============
+
+class AccessLinkCreate(BaseModel):
+    label: str = None
+    expires_days: int = None  # None = never expires
+
+
+def _link_dict(l: AccessLink, request: Request = None) -> dict:
+    d = {
+        "id": l.id,
+        "org_id": l.org_id,
+        "key": l.key,
+        "label": l.label,
+        "is_active": l.is_active,
+        "expired": bool(l.expires_at and l.expires_at < datetime.utcnow()),
+        "expires_at": l.expires_at.isoformat() if l.expires_at else None,
+        "created_at": l.created_at.isoformat() if l.created_at else None,
+        "last_used_at": l.last_used_at.isoformat() if l.last_used_at else None,
+    }
+    if request is not None:
+        host = request.headers.get("host", "localhost:8000")
+        protocol = "https" if request.url.scheme == "https" else "http"
+        d["portal_url"] = f"{protocol}://{host}/portal?key={l.key}"
+    return d
+
+
+@app.get("/api/orgs/{org_id}/links")
+async def list_access_links(
+    org_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user = Depends(require_role("engineer"))
+):
+    """List portal access links for an organization."""
+    links = db.query(AccessLink).filter(AccessLink.org_id == org_id).order_by(AccessLink.created_at.desc()).all()
+    return [_link_dict(l, request) for l in links]
+
+
+@app.post("/api/orgs/{org_id}/links")
+async def create_access_link(
+    org_id: int,
+    req: AccessLinkCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user = Depends(require_role("engineer"))
+):
+    """Create a portal access link for an organization."""
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    expires_at = None
+    if req.expires_days:
+        expires_at = datetime.utcnow() + timedelta(days=int(req.expires_days))
+    link = AccessLink(
+        org_id=org_id,
+        key=generate_token(24),
+        label=(req.label or "").strip() or None,
+        expires_at=expires_at,
+        created_by=user.username if user else None,
+    )
+    db.add(link)
+    db.commit()
+    db.refresh(link)
+    return _link_dict(link, request)
+
+
+@app.delete("/api/links/{link_id}")
+async def revoke_access_link(
+    link_id: int,
+    db: Session = Depends(get_db),
+    user = Depends(require_role("engineer"))
+):
+    """Revoke a portal access link (kept for audit, immediately unusable)."""
+    link = db.query(AccessLink).filter(AccessLink.id == link_id).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Link not found")
+    link.is_active = False
+    db.commit()
+    return {"revoked": link.id}
+
+
+PORTAL_ALLOWED_TESTS = ("traceroute", "mtr")
+
+
+def _portal_link(db: Session, key: str) -> AccessLink:
+    """Resolve a portal key to a live access link or raise 401."""
+    if not key:
+        raise HTTPException(status_code=401, detail="Access key required")
+    link = db.query(AccessLink).filter(AccessLink.key == key).first()
+    if not link or not link.is_active:
+        raise HTTPException(status_code=401, detail="This access link is no longer valid")
+    if link.expires_at and link.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=401, detail="This access link has expired")
+    link.last_used_at = datetime.utcnow()
+    db.commit()
+    return link
+
+
+@app.get("/api/portal/info")
+async def portal_info(key: str = None, db: Session = Depends(get_db)):
+    """Org + circuits for a portal session (access-link authenticated)."""
+    link = _portal_link(db, key)
+    org = db.query(Organization).filter(Organization.id == link.org_id).first()
+    if not org:
+        raise HTTPException(status_code=401, detail="This access link is no longer valid")
+    circuits = db.query(Circuit).filter(
+        Circuit.org_id == org.id, Circuit.is_active == True
+    ).order_by(Circuit.label).all()
+    config = get_config()
+    return {
+        "org_name": org.name,
+        "node_name": config.node_name,
+        "circuits": [
+            {"id": c.id, "label": c.label, "has_target": bool(c.target)}
+            for c in circuits
+        ],
+        "allowed_tests": list(PORTAL_ALLOWED_TESTS),
+    }
+
+
+@app.post("/api/portal/test")
+async def portal_run_test(
+    body: dict,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Run a test from the customer portal — restricted to the org's own
+    registered circuit endpoints and a safe subset of tools."""
+    link = _portal_link(db, body.get("key"))
+    if not portal_test_limiter.is_allowed(link.key):
+        raise HTTPException(status_code=429, detail="Too many tests — try again in a few minutes")
+
+    test_type = body.get("test_type")
+    if test_type not in PORTAL_ALLOWED_TESTS:
+        raise HTTPException(status_code=400, detail="Test type not available in the portal")
+
+    circuit = db.query(Circuit).filter(
+        Circuit.id == body.get("circuit_id"),
+        Circuit.org_id == link.org_id,
+        Circuit.is_active == True
+    ).first()
+    if not circuit:
+        raise HTTPException(status_code=404, detail="Circuit not found")
+    if not circuit.target:
+        raise HTTPException(status_code=400, detail="This circuit has no registered test endpoint — contact your provider")
+
+    config = {"target": circuit.target, "max_hops": 30}
+    if test_type == "mtr":
+        config["count"] = 10
+
+    test_result = TestResult(
+        test_type=test_type,
+        config=json.dumps(config),
+        status="running",
+        org_id=link.org_id,
+        circuit_id=circuit.id,
+    )
+    db.add(test_result)
+    db.commit()
+    db.refresh(test_result)
+    background_tasks.add_task(execute_test, test_result.id, test_type, config)
+    return {"id": test_result.id, "status": "running"}
+
+
+@app.get("/api/portal/tests")
+async def portal_list_tests(key: str = None, db: Session = Depends(get_db)):
+    """The org's own test history (sanitized)."""
+    link = _portal_link(db, key)
+    tests = db.query(TestResult).filter(TestResult.org_id == link.org_id) \
+        .order_by(TestResult.created_at.desc()).limit(50).all()
+    circuit_labels = {c.id: c.label for c in db.query(Circuit).filter(Circuit.org_id == link.org_id).all()}
+    return [
+        {
+            "id": t.id,
+            "test_type": t.test_type,
+            "status": t.status,
+            "circuit_label": circuit_labels.get(t.circuit_id),
+            "created_at": t.created_at.isoformat(),
+        }
+        for t in tests
+    ]
+
+
+@app.get("/api/portal/tests/{test_id}")
+async def portal_get_test(test_id: int, key: str = None, db: Session = Depends(get_db)):
+    """Detail for one of the org's own tests."""
+    link = _portal_link(db, key)
+    test = db.query(TestResult).filter(
+        TestResult.id == test_id, TestResult.org_id == link.org_id
+    ).first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+    return {
+        "id": test.id,
+        "test_type": test.test_type,
+        "status": test.status,
+        "result": json.loads(test.result) if test.result else None,
+        "created_at": test.created_at.isoformat(),
+        "completed_at": test.completed_at.isoformat() if test.completed_at else None,
+    }
 
 
 # ============== Diagnostic Test Endpoints ==============
@@ -1159,6 +1370,19 @@ async def download_iperf3_windows():
 
 
 # ============== Static Files ==============
+
+@app.get("/portal", response_class=HTMLResponse)
+async def portal_page(key: str = None):
+    """Serve the customer portal page (access-link authenticated client-side)."""
+    static_dir = os.path.join(os.path.dirname(__file__), "static")
+    portal_path = os.path.join(static_dir, "portal.html")
+
+    if os.path.exists(portal_path):
+        with open(portal_path, "r") as f:
+            return HTMLResponse(content=f.read())
+
+    return HTMLResponse(content="<h1>Portal page not found</h1>", status_code=404)
+
 
 @app.get("/speedtest", response_class=HTMLResponse)
 async def speedtest_page(token: str = None):
