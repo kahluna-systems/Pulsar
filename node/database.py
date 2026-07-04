@@ -8,13 +8,44 @@ from .config import get_config
 Base = declarative_base()
 
 
+class Organization(Base):
+    """Customer/partner organization registry (local; maps to platform tenants/sites in managed mode)."""
+    __tablename__ = "organizations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), unique=True, nullable=False)
+    org_type = Column(String(20), default="customer")  # customer | partner
+    notes = Column(String(1000))
+    is_active = Column(Boolean, default=True)
+    # Forward-mapping keys, populated when this node joins a platform (hub mode)
+    tenant_id = Column(String(36))
+    site_id = Column(String(36))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Circuit(Base):
+    """A circuit/service belonging to an organization; target is its registered test endpoint."""
+    __tablename__ = "circuits"
+
+    id = Column(Integer, primary_key=True, index=True)
+    org_id = Column(Integer, index=True, nullable=False)
+    label = Column(String(100), nullable=False)  # e.g. CLT-0042
+    target = Column(String(255))  # registered endpoint (IP/hostname) tests run against
+    notes = Column(String(500))
+    is_active = Column(Boolean, default=True)
+    site_id = Column(String(36))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class TestResult(Base):
     """Local test results storage."""
     __tablename__ = "test_results"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     test_type = Column(String(50), index=True, nullable=False)
     customer_id = Column(String(100), index=True)
+    org_id = Column(Integer, index=True)
+    circuit_id = Column(Integer, index=True)
     client_ip = Column(String(45))
     config = Column(Text)  # JSON
     result = Column(Text)  # JSON
@@ -31,6 +62,7 @@ class CustomerToken(Base):
     id = Column(Integer, primary_key=True, index=True)
     token = Column(String(100), unique=True, nullable=False, index=True)
     customer_id = Column(String(100), index=True)
+    org_id = Column(Integer, index=True)
     note = Column(String(500))
     expires_at = Column(DateTime, nullable=False)
     max_uses = Column(Integer, default=1)
@@ -81,9 +113,32 @@ def init_db(db_path: str = None):
         connect_args={"check_same_thread": False}
     )
     _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
-    
+
     # Create tables
     Base.metadata.create_all(bind=_engine)
+    _migrate_columns(_engine)
+
+
+def _migrate_columns(engine):
+    """Add columns introduced after a table already exists on disk.
+
+    create_all() only creates missing tables; SQLite needs explicit
+    ALTER TABLE for new columns on existing databases (e.g. the volume
+    of an already-deployed node).
+    """
+    from sqlalchemy import text
+
+    additions = [
+        ("test_results", "org_id", "INTEGER"),
+        ("test_results", "circuit_id", "INTEGER"),
+        ("customer_tokens", "org_id", "INTEGER"),
+    ]
+    with engine.connect() as conn:
+        for table, column, ddl_type in additions:
+            existing = [row[1] for row in conn.execute(text(f"PRAGMA table_info({table})")).fetchall()]
+            if existing and column not in existing:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"))
+        conn.commit()
 
 
 def get_db():

@@ -303,7 +303,7 @@
             <button class="tab" onclick="showPanel('ping')">Continuous Ping</button>
             <button class="tab" onclick="showPanel('iperf')">iPerf3</button>
             <button class="tab" onclick="showPanel('capture')">Packet Capture</button>
-            <button class="tab" onclick="showPanel('tokens')">Customer Tokens</button>
+            <button class="tab" onclick="showPanel('tokens')">Customers</button>
             <button class="tab" onclick="showPanel('history')">Test History</button>
             <button class="tab" id="tab-admin" style="display:none;" onclick="showPanel('admin')">Admin</button>
         </div>
@@ -338,7 +338,7 @@
                     <button class="btn btn-primary" onclick="showPanel('mtr')">MTR</button>
                     <button class="btn btn-primary" onclick="showPanel('dns')">DNS Lookup</button>
                     <button class="btn btn-primary" onclick="showPanel('ping')">Continuous Ping</button>
-                    <button class="btn btn-secondary" onclick="showPanel('tokens')">Customer Tokens</button>
+                    <button class="btn btn-secondary" onclick="showPanel('tokens')">Customers</button>
                 </div>
             </div>
         </div>
@@ -640,8 +640,34 @@
             </div>
         </div>
         
-        <!-- Customer Tokens Panel -->
+        <!-- Customers Panel -->
         <div id="panel-tokens" class="panel">
+            <div class="card">
+                <h2>Organizations</h2>
+                <p class="help-text" style="margin-bottom:15px;">Customer and partner organizations served from this node. Circuits carry the registered endpoint that tests run against.</p>
+                <div id="org-msg" style="display:none;margin-bottom:10px;"></div>
+                <div id="org-list">Loading...</div>
+                <h3 style="margin-top:20px;">Add Organization</h3>
+                <div class="form-row" style="margin-top:10px;">
+                    <div class="form-group">
+                        <label>Name</label>
+                        <input type="text" id="org-name" placeholder="Acme Corp">
+                    </div>
+                    <div class="form-group">
+                        <label>Type</label>
+                        <select id="org-type">
+                            <option value="customer">Customer</option>
+                            <option value="partner">Partner</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Notes (optional)</label>
+                        <input type="text" id="org-notes" placeholder="Account #, contacts...">
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="createOrg()">Create Organization</button>
+            </div>
+
             <div class="card">
                 <h2>Create Customer Test Token</h2>
                 <p class="help-text" style="margin-bottom:15px;">Generate a tracked link for customers. Results will be associated with the customer ID.</p>
@@ -765,6 +791,7 @@
             updateSpeedtestForm();
             loadHistory();
             loadTokens();
+            loadOrgs();
             loadPingSessions();
         });
         
@@ -789,9 +816,101 @@
 
             if (name === 'overview') loadOverview();
             if (name === 'history') loadHistory();
-            if (name === 'tokens') loadTokens();
+            if (name === 'tokens') { loadTokens(); loadOrgs(); }
             if (name === 'ping') loadPingSessions();
             if (name === 'admin') loadAdmin();
+        }
+
+        // ===== Organizations & Circuits =====
+        let _orgsCache = [];
+
+        async function loadOrgs() {
+            const div = document.getElementById('org-list');
+            try {
+                const resp = await fetch('/api/orgs');
+                if (!resp.ok) { div.textContent = 'Unable to load organizations.'; return; }
+                _orgsCache = await resp.json();
+                if (!_orgsCache.length) {
+                    div.innerHTML = '<p style="color:#888;">No organizations yet — add your first customer below.</p>';
+                    return;
+                }
+                div.innerHTML = _orgsCache.map(o => `
+                    <div style="border:1px solid #e1e5e9;border-radius:8px;padding:15px;margin-bottom:10px;">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                            <div>
+                                <strong>${_esc(o.name)}</strong>
+                                <span class="status-badge ${o.org_type === 'partner' ? 'status-running' : 'status-completed'}">${_esc(o.org_type)}</span>
+                                ${o.notes ? `<br><small style="color:#666;">${_esc(o.notes)}</small>` : ''}
+                            </div>
+                            <button class="btn btn-danger" onclick="deleteOrg(${o.id})">Delete</button>
+                        </div>
+                        <div style="margin-top:12px;">
+                            ${o.circuits.map(c => `
+                                <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:#f8f9fa;border-radius:6px;margin-bottom:6px;">
+                                    <div><code>${_esc(c.label)}</code> ${c.target ? `&rarr; ${_esc(c.target)}` : '<span style="color:#888;">(no registered endpoint)</span>'}</div>
+                                    <button class="btn btn-secondary" onclick="deleteCircuit(${c.id}, ${o.id})">Remove</button>
+                                </div>`).join('')}
+                            <div style="display:flex;gap:8px;margin-top:8px;">
+                                <input type="text" id="circ-label-${o.id}" placeholder="Circuit ID (e.g. CLT-0042)" style="flex:1;padding:8px;border:1px solid #e1e5e9;border-radius:6px;">
+                                <input type="text" id="circ-target-${o.id}" placeholder="Endpoint IP/hostname (optional)" style="flex:1;padding:8px;border:1px solid #e1e5e9;border-radius:6px;">
+                                <button class="btn btn-primary" onclick="addCircuit(${o.id})">Add Circuit</button>
+                            </div>
+                        </div>
+                    </div>`).join('');
+            } catch (e) { div.textContent = 'Unable to load organizations.'; }
+        }
+
+        async function createOrg() {
+            const name = document.getElementById('org-name').value.trim();
+            const org_type = document.getElementById('org-type').value;
+            const notes = document.getElementById('org-notes').value.trim() || null;
+            const resp = await fetch('/api/orgs', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, org_type, notes })
+            });
+            if (resp.ok) {
+                _flash('org-msg', `Organization "${name}" created.`, true);
+                document.getElementById('org-name').value = '';
+                document.getElementById('org-notes').value = '';
+                loadOrgs();
+            } else {
+                const err = await resp.json().catch(() => ({}));
+                _flash('org-msg', err.detail || 'Failed to create organization', false);
+            }
+        }
+
+        async function deleteOrg(id) {
+            const org = _orgsCache.find(o => o.id === id);
+            const name = org ? org.name : `#${id}`;
+            if (!confirm(`Delete organization "${name}" and its circuits? Historical tests are kept.`)) return;
+            const resp = await fetch(`/api/orgs/${id}`, { method: 'DELETE' });
+            const err = await resp.json().catch(() => ({}));
+            _flash('org-msg', resp.ok ? `Organization "${name}" deleted.` : (err.detail || 'Delete failed'), resp.ok);
+            if (resp.ok) loadOrgs();
+        }
+
+        async function addCircuit(orgId) {
+            const label = document.getElementById(`circ-label-${orgId}`).value.trim();
+            const target = document.getElementById(`circ-target-${orgId}`).value.trim() || null;
+            if (!label) { _flash('org-msg', 'Circuit ID is required.', false); return; }
+            const resp = await fetch(`/api/orgs/${orgId}/circuits`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ label, target })
+            });
+            if (resp.ok) { loadOrgs(); }
+            else {
+                const err = await resp.json().catch(() => ({}));
+                _flash('org-msg', err.detail || 'Failed to add circuit', false);
+            }
+        }
+
+        async function deleteCircuit(circuitId, orgId) {
+            const resp = await fetch(`/api/circuits/${circuitId}`, { method: 'DELETE' });
+            if (resp.ok) { loadOrgs(); }
+            else {
+                const err = await resp.json().catch(() => ({}));
+                _flash('org-msg', err.detail || 'Failed to remove circuit', false);
+            }
         }
 
         // ===== Admin panel =====

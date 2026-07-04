@@ -14,7 +14,7 @@ import asyncio
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from .config import get_config, NodeConfig, save_config, set_config, _ENV_MAP
-from .database import get_db, init_db, TestResult, CustomerToken, User
+from .database import get_db, init_db, TestResult, CustomerToken, User, Organization, Circuit
 from .auth import (
     get_current_user, get_optional_user, require_role,
     create_access_token, create_refresh_token, authenticate_user,
@@ -513,6 +513,137 @@ async def speedtest_save_result(
     db.refresh(test_result)
     
     return {"id": test_result.id, "status": "saved"}
+
+
+# ============== Customer Organizations & Circuits ==============
+
+class OrgCreate(BaseModel):
+    name: str
+    org_type: str = "customer"
+    notes: str = None
+
+
+class CircuitCreate(BaseModel):
+    label: str
+    target: str = None
+    notes: str = None
+
+
+def _org_dict(o: Organization, circuits: list) -> dict:
+    return {
+        "id": o.id,
+        "name": o.name,
+        "org_type": o.org_type,
+        "notes": o.notes,
+        "is_active": o.is_active,
+        "created_at": o.created_at.isoformat() if o.created_at else None,
+        "circuits": [
+            {
+                "id": c.id,
+                "label": c.label,
+                "target": c.target,
+                "notes": c.notes,
+                "is_active": c.is_active,
+            }
+            for c in circuits
+        ],
+    }
+
+
+@app.get("/api/orgs")
+async def list_orgs(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    user = Depends(require_role("engineer"))
+):
+    """List organizations with their circuits."""
+    q = db.query(Organization).order_by(Organization.name)
+    if not include_inactive:
+        q = q.filter(Organization.is_active == True)
+    orgs = q.all()
+    circuits = db.query(Circuit).filter(Circuit.is_active == True).all()
+    by_org = {}
+    for c in circuits:
+        by_org.setdefault(c.org_id, []).append(c)
+    return [_org_dict(o, by_org.get(o.id, [])) for o in orgs]
+
+
+@app.post("/api/orgs")
+async def create_org(
+    req: OrgCreate,
+    db: Session = Depends(get_db),
+    user = Depends(require_role("engineer"))
+):
+    """Create an organization."""
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Organization name is required")
+    if req.org_type not in ("customer", "partner"):
+        raise HTTPException(status_code=400, detail="Type must be customer or partner")
+    if db.query(Organization).filter(Organization.name == name).first():
+        raise HTTPException(status_code=400, detail="An organization with that name already exists")
+    org = Organization(name=name, org_type=req.org_type, notes=req.notes)
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+    return _org_dict(org, [])
+
+
+@app.delete("/api/orgs/{org_id}")
+async def delete_org(
+    org_id: int,
+    db: Session = Depends(get_db),
+    user = Depends(require_role("engineer"))
+):
+    """Delete an organization and its circuits. Historical tests keep their org_id."""
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    db.query(Circuit).filter(Circuit.org_id == org_id).delete()
+    db.delete(org)
+    db.commit()
+    return {"deleted": org.name}
+
+
+@app.post("/api/orgs/{org_id}/circuits")
+async def create_circuit(
+    org_id: int,
+    req: CircuitCreate,
+    db: Session = Depends(get_db),
+    user = Depends(require_role("engineer"))
+):
+    """Add a circuit to an organization."""
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    label = (req.label or "").strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="Circuit label is required")
+    dup = db.query(Circuit).filter(
+        Circuit.org_id == org_id, Circuit.label == label, Circuit.is_active == True
+    ).first()
+    if dup:
+        raise HTTPException(status_code=400, detail="That circuit label already exists for this organization")
+    circuit = Circuit(org_id=org_id, label=label, target=(req.target or "").strip() or None, notes=req.notes)
+    db.add(circuit)
+    db.commit()
+    db.refresh(circuit)
+    return {"id": circuit.id, "org_id": org_id, "label": circuit.label, "target": circuit.target}
+
+
+@app.delete("/api/circuits/{circuit_id}")
+async def delete_circuit(
+    circuit_id: int,
+    db: Session = Depends(get_db),
+    user = Depends(require_role("engineer"))
+):
+    """Remove a circuit."""
+    circuit = db.query(Circuit).filter(Circuit.id == circuit_id).first()
+    if not circuit:
+        raise HTTPException(status_code=404, detail="Circuit not found")
+    db.delete(circuit)
+    db.commit()
+    return {"deleted": circuit.label}
 
 
 # ============== Diagnostic Test Endpoints ==============
