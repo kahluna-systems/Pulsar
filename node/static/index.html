@@ -1952,17 +1952,20 @@
             const div = document.getElementById('iperf-guide');
             if (!div) return;
             const host = window.location.hostname;
+            const dlUrl = `${window.location.origin}/downloads/iperf3-win64.zip`;
+            const winSetup = `iwr ${dlUrl} -OutFile iperf3.zip; Expand-Archive iperf3.zip iperf3 -Force; cd iperf3; .\\iperf3.exe -c ${host}`;
             const cmds = [
-                { label: 'Upload test (client → this node)', cmd: `iperf3 -c ${host}`, note: 'The basic test. Measures the sender’s upload toward this node.' },
+                { label: 'Windows: one-paste setup + upload test (PowerShell)', cmd: winSetup, note: 'Downloads the client from this node, unpacks it, and runs the upload test — all in one paste. After this, run any command below as .\\iperf3.exe from the same window.' },
+                { label: 'Upload test (client → this node)', cmd: `iperf3 -c ${host}`, note: 'The basic test. Measures the sender’s upload toward this node. On Windows: .\\iperf3.exe' },
                 { label: 'Download test (this node → client)', cmd: `iperf3 -c ${host} -R`, note: 'Reverse mode: this node sends, the client receives.' },
                 { label: 'True line capacity (parallel streams)', cmd: `iperf3 -c ${host} -R -P 4`, note: 'A single stream is window-limited over distance; 4 parallel streams approximate real capacity. A big gap between this and the single-stream test points to latency, not a slow line.' },
-                { label: 'Both directions at once', cmd: `iperf3 -c ${host} --bidir`, note: 'Requires iperf3 3.7 or newer (see downloads above — older Windows builds don’t have it).' },
+                { label: 'Both directions at once', cmd: `iperf3 -c ${host} --bidir`, note: 'Requires iperf3 3.7+. The client served by this node supports it.' },
                 { label: 'UDP jitter & loss (VoIP quality)', cmd: `iperf3 -c ${host} -u -b 10M`, note: 'Sends 10 Mbps of UDP and reports jitter and packet loss.' },
             ];
             div.innerHTML = `
-                <h3 style="margin-bottom:8px;">1 &middot; Install iperf3</h3>
+                <h3 style="margin-bottom:8px;">1 &middot; Get the client</h3>
                 <table style="border-collapse:collapse;margin-bottom:16px;font-size:0.9em;">
-                    <tr><td style="padding:3px 14px 3px 0;color:#666;">Windows</td><td><a href="https://github.com/ar51an/iperf3-win-builds/releases" target="_blank" rel="noopener">github.com/ar51an/iperf3-win-builds</a> <span class="help-text">(current builds; unzip, then run commands from that folder — prefix with <code>.\\</code>, e.g. <code>.\\iperf3.exe ...</code>)</span></td></tr>
+                    <tr><td style="padding:3px 14px 3px 0;color:#666;">Windows</td><td>Use the <strong>one-paste setup</strong> below (recommended) — or <a href="/downloads/iperf3-win64.zip">download iperf3 from this node</a> <span class="help-text">(iperf 3.21 win64, version-pinned and checksum-verified at build)</span></td></tr>
                     <tr><td style="padding:3px 14px 3px 0;color:#666;">macOS</td><td><code>brew install iperf3</code></td></tr>
                     <tr><td style="padding:3px 14px 3px 0;color:#666;">Linux</td><td><code>sudo apt install iperf3</code> (Debian/Ubuntu) &middot; <code>sudo dnf install iperf3</code> (RHEL/Fedora)</td></tr>
                 </table>

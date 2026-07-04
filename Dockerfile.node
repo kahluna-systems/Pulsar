@@ -28,6 +28,15 @@ COPY node/ ./node/
 # Create static directory if not exists
 RUN mkdir -p /app/node/static /app/data
 
+# Vendored iperf3 Windows client, served to customers at /downloads/iperf3-win64.zip.
+# Community build (github.com/ar51an/iperf3-win-builds) pinned by version + SHA-256;
+# the build fails hard on any mismatch.
+ARG IPERF3_WIN_URL=https://github.com/ar51an/iperf3-win-builds/releases/download/3.21/iperf-3.21-win64.zip
+ARG IPERF3_WIN_SHA256=9b73b7e0e0326347b5f4ac4f6a1fc34fe60a5966e5fd172c7bfcd0e1cc93e709
+RUN mkdir -p /app/vendor && \
+    curl -fsSL -o /app/vendor/iperf3-win64.zip "$IPERF3_WIN_URL" && \
+    echo "$IPERF3_WIN_SHA256  /app/vendor/iperf3-win64.zip" | sha256sum -c -
+
 # Create non-root user (but keep cap_net_raw for ping/tcpdump)
 RUN useradd -m -u 1000 appuser
 RUN chown -R appuser:appuser /app

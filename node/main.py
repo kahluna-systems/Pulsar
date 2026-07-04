@@ -1146,6 +1146,18 @@ async def get_node_info():
     }
 
 
+@app.get("/downloads/iperf3-win64.zip")
+async def download_iperf3_windows():
+    """Serve the vendored iperf3 Windows client (public — customers fetch this)."""
+    path = os.environ.get("VENDOR_DIR", "/app/vendor") + "/iperf3-win64.zip"
+    if os.path.exists(path):
+        return FileResponse(path, filename="iperf3-win64.zip", media_type="application/zip")
+    raise HTTPException(
+        status_code=404,
+        detail="iperf3 client bundle not present on this node (Docker image builds include it)"
+    )
+
+
 # ============== Static Files ==============
 
 @app.get("/speedtest", response_class=HTMLResponse)
