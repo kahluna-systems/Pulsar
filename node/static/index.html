@@ -1963,8 +1963,16 @@
                 if (data.received) {
                     html += `<p><strong>Received:</strong> ${(data.received.bytes / 1024 / 1024).toFixed(2)} MB</p>`;
                 }
+            } else if (data.mode === 'server' && data.received_mbps !== undefined) {
+                html += `<div class="metric-grid">
+                    <div class="metric"><div class="metric-value">${data.received_mbps}</div><div class="metric-label">Received Mbps (client upload)</div></div>
+                    <div class="metric"><div class="metric-value">${data.sent_mbps}</div><div class="metric-label">Sent Mbps (client download)</div></div>
+                </div>
+                <p><strong>Client:</strong> ${_esc(data.client || 'unknown')} &middot; <strong>Duration:</strong> ${data.duration}s
+                   &middot; <strong>Transferred:</strong> ${((data.received_bytes + data.sent_bytes) / 1024 / 1024).toFixed(1)} MB</p>
+                ${data.sent_mbps === 0 ? '<p class="help-text">Sent is 0 because the client ran a forward-only test. Use <code>--bidir</code> (or <code>-R</code>) on the client to exercise the server &rarr; client direction.</p>' : ''}`;
             } else if (data.mode === 'server') {
-                html += `<div class="success-msg">Server completed. Check raw output below.</div>`;
+                html += `<div class="success-msg">Server session ended. Check raw output below.</div>`;
             }
             
             html += `<details><summary>Raw Output</summary><pre>${JSON.stringify(data, null, 2)}</pre></details>`;

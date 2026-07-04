@@ -100,15 +100,9 @@ class IperfRunner:
                 text=True,
                 timeout=timeout
             )
-            
-            return {
-                "mode": "server",
-                "port": port,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "returncode": result.returncode
-            }
-            
+
+            return self._parse_server_result(result, port)
+
         except subprocess.TimeoutExpired:
             return {"error": "Server mode timed out (no client connected)"}
         except FileNotFoundError:
@@ -116,6 +110,48 @@ class IperfRunner:
         except Exception as e:
             return {"error": str(e)}
     
+    def _parse_server_result(self, result, port: int) -> dict:
+        """Parse iperf3 -s -J output into a readable summary (mirrors client parsing)."""
+        parsed = None
+        try:
+            parsed = json.loads(result.stdout) if result.stdout else None
+        except json.JSONDecodeError:
+            parsed = None
+
+        if parsed and parsed.get("error"):
+            return {"mode": "server", "port": port, "error": parsed["error"]}
+
+        if parsed and "end" in parsed:
+            start = parsed.get("start", {})
+            end = parsed.get("end", {})
+            connected = (start.get("connected") or [{}])[0]
+            # Server perspective: sum_received = client -> server (client upload),
+            # sum_sent = server -> client (only nonzero for -R / --bidir sessions).
+            sum_recv = end.get("sum_received") or end.get("sum") or {}
+            sum_sent = end.get("sum_sent") or {}
+            return {
+                "mode": "server",
+                "port": port,
+                "client": connected.get("remote_host"),
+                "duration": round(sum_recv.get("seconds") or 0, 1),
+                "received_mbps": round(sum_recv.get("bits_per_second", 0) / 1_000_000, 2),
+                "sent_mbps": round(sum_sent.get("bits_per_second", 0) / 1_000_000, 2),
+                "received_bytes": sum_recv.get("bytes", 0),
+                "sent_bytes": sum_sent.get("bytes", 0),
+                "iperf_version": start.get("version"),
+                "raw": parsed,
+            }
+
+        # Fell through: no JSON we understand — keep the raw output for debugging
+        return {
+            "mode": "server",
+            "port": port,
+            "error": "No client connected" if result.returncode != 0 else None,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "returncode": result.returncode,
+        }
+
     def _parse_client_result(self, output: str, config: dict) -> dict:
         """Parse iPerf3 JSON output into structured result."""
         try:
