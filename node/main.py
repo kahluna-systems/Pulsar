@@ -910,7 +910,9 @@ def _metric_summary(test_type: str, result: dict) -> dict:
         if hops:
             m["hops"] = len(hops)
             m["rtt_avg"] = hops[-1].get("rtt_avg")
-            m["worst_loss"] = max((h.get("loss_percent") or 0) for h in hops)
+            # End-to-end loss = final hop's loss. Intermediate hops that never
+            # answer (common on cloud paths) are not packet loss.
+            m["loss_percent"] = hops[-1].get("loss_percent")
     elif test_type == "traceroute":
         hops = result.get("hops") or []
         m["hops"] = len(hops) or None
@@ -924,7 +926,10 @@ def _metric_summary(test_type: str, result: dict) -> dict:
     elif test_type == "ssl_check":
         m["days_until_expiry"] = result.get("days_until_expiry")
         m["valid"] = result.get("valid")
-    return {k: v for k, v in m.items() if v is not None}
+    return {
+        k: (round(v, 2) if isinstance(v, float) else v)
+        for k, v in m.items() if v is not None
+    }
 
 
 def _report_payload(db: Session, org: Organization, from_dt: datetime, to_dt: datetime) -> dict:
