@@ -1,5 +1,5 @@
 """KahLuna Pulsar - Network Diagnostics Node Application."""
-from fastapi import FastAPI, Depends, BackgroundTasks, Request, Response, HTTPException
+from fastapi import FastAPI, Depends, BackgroundTasks, Request, Response, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -881,6 +881,158 @@ async def portal_get_test(test_id: int, key: str = None, db: Session = Depends(g
     }
 
 
+# ============== Per-Org Reports ==============
+
+def _metric_summary(test_type: str, result: dict) -> dict:
+    """Extract headline numbers from a test result for report rows."""
+    if not isinstance(result, dict):
+        return {}
+    if result.get("error"):
+        return {"error": True}
+    m = {}
+    if test_type in ("speedtest_customer", "speedtest"):
+        for k in ("download_mbps", "upload_mbps", "ping_avg"):
+            m[k] = result.get(k)
+    elif test_type == "iperf":
+        if result.get("mode") == "server":
+            m["download_mbps"] = result.get("sent_mbps") or None
+            m["upload_mbps"] = result.get("received_mbps") or None
+        else:
+            m["download_mbps"] = result.get("download_mbps")
+            m["upload_mbps"] = result.get("upload_mbps")
+    elif test_type == "continuous_ping":
+        s = result.get("stats") or {}
+        m["rtt_avg"] = s.get("rtt_avg")
+        m["loss_percent"] = s.get("loss_percent")
+        m["jitter_ms"] = s.get("rtt_jitter")
+    elif test_type == "mtr":
+        hops = result.get("hops") or []
+        if hops:
+            m["hops"] = len(hops)
+            m["rtt_avg"] = hops[-1].get("rtt_avg")
+            m["worst_loss"] = max((h.get("loss_percent") or 0) for h in hops)
+    elif test_type == "traceroute":
+        hops = result.get("hops") or []
+        m["hops"] = len(hops) or None
+        if hops:
+            m["rtt_avg"] = hops[-1].get("rtt_ms")
+    elif test_type == "dns":
+        m["response_ms"] = result.get("response_time_ms")
+    elif test_type == "tcp_check":
+        m["open"] = result.get("is_open", result.get("open"))
+        m["connect_ms"] = result.get("connect_time_ms", result.get("response_time_ms"))
+    elif test_type == "ssl_check":
+        m["days_until_expiry"] = result.get("days_until_expiry")
+        m["valid"] = result.get("valid")
+    return {k: v for k, v in m.items() if v is not None}
+
+
+def _report_payload(db: Session, org: Organization, from_dt: datetime, to_dt: datetime) -> dict:
+    circuits = db.query(Circuit).filter(Circuit.org_id == org.id).all()
+    labels = {c.id: c.label for c in circuits}
+    tests = db.query(TestResult).filter(
+        TestResult.org_id == org.id,
+        TestResult.created_at >= from_dt,
+        TestResult.created_at < to_dt,
+    ).order_by(TestResult.created_at.asc()).all()
+
+    items = []
+    for t in tests:
+        try:
+            result = json.loads(t.result) if t.result else None
+        except (json.JSONDecodeError, TypeError):
+            result = None
+        items.append({
+            "id": t.id,
+            "test_type": t.test_type,
+            "status": t.status,
+            "circuit_label": labels.get(t.circuit_id),
+            "created_at": t.created_at.isoformat(),
+            "metrics": _metric_summary(t.test_type, result) if result else {},
+        })
+
+    def _vals(key):
+        return [i["metrics"][key] for i in items if isinstance(i["metrics"].get(key), (int, float))]
+
+    def _avg(v):
+        return round(sum(v) / len(v), 2) if v else None
+
+    downs, ups, rtts = _vals("download_mbps"), _vals("upload_mbps"), _vals("rtt_avg")
+    losses = [
+        i["metrics"].get("loss_percent", i["metrics"].get("worst_loss"))
+        for i in items
+        if isinstance(i["metrics"].get("loss_percent", i["metrics"].get("worst_loss")), (int, float))
+    ]
+    by_type = {}
+    for i in items:
+        by_type[i["test_type"]] = by_type.get(i["test_type"], 0) + 1
+
+    config = get_config()
+    return {
+        "org": {"name": org.name, "org_type": org.org_type},
+        "node": {"name": config.node_name, "node_id": config.node_id, "location": config.location},
+        "period": {"from": from_dt.date().isoformat(), "to": (to_dt - timedelta(days=1)).date().isoformat()},
+        "generated_at": datetime.utcnow().isoformat(),
+        "circuits": [{"label": c.label, "target": c.target} for c in circuits],
+        "aggregates": {
+            "total": len(items),
+            "completed": sum(1 for i in items if i["status"] == "completed"),
+            "failed": sum(1 for i in items if i["status"] == "failed"),
+            "by_type": by_type,
+            "avg_download_mbps": _avg(downs),
+            "max_download_mbps": max(downs) if downs else None,
+            "avg_upload_mbps": _avg(ups),
+            "max_upload_mbps": max(ups) if ups else None,
+            "avg_rtt_ms": _avg(rtts),
+            "avg_loss_percent": _avg(losses),
+        },
+        "tests": items,
+    }
+
+
+def _parse_report_range(from_: str, to: str):
+    try:
+        to_dt = (datetime.fromisoformat(to) + timedelta(days=1)) if to else (datetime.utcnow() + timedelta(days=1))
+        from_dt = datetime.fromisoformat(from_) if from_ else (datetime.utcnow() - timedelta(days=30))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dates must be YYYY-MM-DD")
+    if from_dt >= to_dt:
+        raise HTTPException(status_code=400, detail="'from' must be before 'to'")
+    return from_dt, to_dt
+
+
+@app.get("/api/report/data")
+async def report_data(
+    org_id: int,
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    user = Depends(require_role("engineer"))
+):
+    """Report dataset for an organization over a date range (staff)."""
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    from_dt, to_dt = _parse_report_range(from_, to)
+    return _report_payload(db, org, from_dt, to_dt)
+
+
+@app.get("/api/portal/report")
+async def portal_report(
+    key: str = None,
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Report dataset for the access link's own organization."""
+    link = _portal_link(db, key)
+    org = db.query(Organization).filter(Organization.id == link.org_id).first()
+    if not org:
+        raise HTTPException(status_code=401, detail="This access link is no longer valid")
+    from_dt, to_dt = _parse_report_range(from_, to)
+    return _report_payload(db, org, from_dt, to_dt)
+
+
 # ============== Diagnostic Test Endpoints ==============
 
 @app.post("/api/tests")
@@ -1376,6 +1528,19 @@ async def download_iperf3_windows():
 
 
 # ============== Static Files ==============
+
+@app.get("/report", response_class=HTMLResponse)
+async def report_page():
+    """Serve the printable report page (data auth happens at the API layer)."""
+    static_dir = os.path.join(os.path.dirname(__file__), "static")
+    report_path = os.path.join(static_dir, "report.html")
+
+    if os.path.exists(report_path):
+        with open(report_path, "r") as f:
+            return HTMLResponse(content=f.read())
+
+    return HTMLResponse(content="<h1>Report page not found</h1>", status_code=404)
+
 
 @app.get("/portal", response_class=HTMLResponse)
 async def portal_page(key: str = None):

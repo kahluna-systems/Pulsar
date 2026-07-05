@@ -1238,6 +1238,7 @@
                 ${o.notes ? `<p style="color:#666;font-size:0.9em;margin-top:6px;">${_esc(o.notes)}</p>` : ''}
                 <p style="color:#999;font-size:0.82em;margin:6px 0 16px;">Created ${o.created_at ? new Date(o.created_at).toLocaleDateString() : '—'} &middot; ${o.tests_count} test${o.tests_count === 1 ? '' : 's'} recorded</p>
                 <div style="display:flex;gap:8px;margin-bottom:22px;flex-wrap:wrap;">
+                    <button class="btn btn-primary" onclick="window.open('/report?org_id=${o.id}','_blank')">Report →</button>
                     <button class="btn btn-secondary" onclick="viewOrgHistory(${o.id})">View Test History →</button>
                     <button class="btn btn-secondary" onclick="prepOrgToken(${o.id})">New Test Token</button>
                 </div>

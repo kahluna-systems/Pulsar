@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Performance Report</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; color: #1f2340; }
+        .page { max-width: 900px; margin: 0 auto; padding: 26px 20px 60px; }
+        .controls {
+            display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+            background: white; border-radius: 10px; padding: 14px 16px; margin-bottom: 18px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+        }
+        .controls label { font-size: 0.78em; color: #666; display: block; margin-bottom: 3px; }
+        .controls input { padding: 8px 10px; border: 2px solid #e1e5e9; border-radius: 6px; }
+        .btn { padding: 9px 18px; border: none; border-radius: 6px; cursor: pointer; font-weight: 500; }
+        .btn-primary { background: #667eea; color: white; }
+        .btn-dark { background: #1f2340; color: white; }
+        .report {
+            background: white; border-radius: 12px; padding: 38px 42px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        }
+        .rpt-head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #667eea; padding-bottom: 18px; margin-bottom: 24px; }
+        .rpt-head h1 { font-size: 1.45em; }
+        .rpt-head .org { color: #667eea; }
+        .meta { color: #666; font-size: 0.86em; margin-top: 6px; line-height: 1.55; }
+        .brand { text-align: right; }
+        .brand .name { font-weight: 700; letter-spacing: 0.3px; }
+        .brand .sub { color: #888; font-size: 0.78em; }
+        .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 26px; }
+        .stat { border: 1px solid #e8eaf1; border-radius: 10px; padding: 14px; text-align: center; }
+        .stat .v { font-size: 1.45em; font-weight: 700; }
+        .stat .l { font-size: 0.74em; color: #777; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.6px; }
+        h2 { font-size: 1.02em; margin: 26px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #eef0f6; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.86em; }
+        th { text-align: left; color: #555; background: #f7f8fb; padding: 8px 10px; border-bottom: 2px solid #e8eaf1; }
+        td { padding: 7px 10px; border-bottom: 1px solid #f0f1f6; }
+        tr:nth-child(even) td { background: #fbfbfd; }
+        .ok { color: #1a7f37; } .bad { color: #c0392b; }
+        .foot { margin-top: 34px; padding-top: 14px; border-top: 1px solid #eef0f6; color: #999; font-size: 0.78em; display: flex; justify-content: space-between; }
+        .note { color: #888; font-size: 0.88em; }
+        .err-box { background: #f8d7da; color: #721c24; padding: 16px; border-radius: 8px; }
+        @media print {
+            body { background: white; }
+            .controls { display: none; }
+            .page { padding: 0; max-width: none; }
+            .report { box-shadow: none; border-radius: 0; padding: 10px 6px; }
+            .stat { break-inside: avoid; }
+            tr { break-inside: avoid; }
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <div class="controls">
+            <div><label>From</label><input type="date" id="from"></div>
+            <div><label>To</label><input type="date" id="to"></div>
+            <button class="btn btn-primary" onclick="applyRange()">Apply</button>
+            <div style="flex:1;"></div>
+            <button class="btn btn-dark" onclick="window.print()">Print / Save PDF</button>
+        </div>
+        <div class="report" id="report"><p class="note">Loading report&hellip;</p></div>
+    </div>
+
+    <script>
+    (function () {
+        const P = new URLSearchParams(location.search);
+        const KEY = P.get('key'), ORG = P.get('org_id');
+        const box = document.getElementById('report');
+
+        const today = new Date();
+        const monthAgo = new Date(today.getTime() - 30 * 86400000);
+        const iso = d => d.toISOString().slice(0, 10);
+        document.getElementById('from').value = P.get('from') || iso(monthAgo);
+        document.getElementById('to').value = P.get('to') || iso(today);
+
+        window.applyRange = function () {
+            P.set('from', document.getElementById('from').value);
+            P.set('to', document.getElementById('to').value);
+            location.search = P.toString();
+        };
+
+        function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+        const fmt = (v, unit) => v == null ? '—' : `${v}${unit || ''}`;
+        const dt = s => new Date(s).toLocaleString();
+
+        function rows(items, cols) {
+            return items.map(t => `<tr>${cols.map(c => `<td>${c(t)}</td>`).join('')}</tr>`).join('');
+        }
+
+        function statusCell(t) {
+            return t.status === 'completed'
+                ? (t.metrics.error ? '<span class="bad">error</span>' : '<span class="ok">completed</span>')
+                : `<span class="bad">${esc(t.status)}</span>`;
+        }
+
+        function section(title, headers, body) {
+            if (!body) return '';
+            return `<h2>${title}</h2><table><thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
+        }
+
+        function render(d) {
+            const a = d.aggregates;
+            const speed = d.tests.filter(t => ['speedtest_customer', 'speedtest', 'iperf'].includes(t.test_type));
+            const quality = d.tests.filter(t => ['continuous_ping', 'mtr'].includes(t.test_type));
+            const path = d.tests.filter(t => ['traceroute', 'dns', 'tcp_check', 'ssl_check', 'packet_capture'].includes(t.test_type));
+
+            box.innerHTML = `
+                <div class="rpt-head">
+                    <div>
+                        <h1>Network Performance Report</h1>
+                        <div style="font-size:1.1em;margin-top:4px;" class="org"><strong>${esc(d.org.name)}</strong></div>
+                        <div class="meta">
+                            Period: ${esc(d.period.from)} &rarr; ${esc(d.period.to)}<br>
+                            Test node: ${esc(d.node.name)}${d.node.location ? ' &middot; ' + esc(d.node.location) : ''}<br>
+                            Circuits: ${d.circuits.length ? d.circuits.map(c => esc(c.label)).join(', ') : '—'}
+                        </div>
+                    </div>
+                    <div class="brand">
+                        <div class="name">KahLuna Pulsar</div>
+                        <div class="sub">Network Diagnostics</div>
+                        <div class="sub" style="margin-top:10px;">Generated ${dt(d.generated_at)}</div>
+                    </div>
+                </div>
+
+                <div class="stat-grid">
+                    <div class="stat"><div class="v">${a.total}</div><div class="l">Tests Run</div></div>
+                    <div class="stat"><div class="v">${a.total ? Math.round(a.completed / a.total * 100) + '%' : '—'}</div><div class="l">Completed</div></div>
+                    <div class="stat"><div class="v">${fmt(a.avg_download_mbps)}</div><div class="l">Avg Down Mbps</div></div>
+                    <div class="stat"><div class="v">${fmt(a.avg_upload_mbps)}</div><div class="l">Avg Up Mbps</div></div>
+                    <div class="stat"><div class="v">${fmt(a.avg_rtt_ms)}</div><div class="l">Avg RTT ms</div></div>
+                    <div class="stat"><div class="v">${fmt(a.avg_loss_percent, '%')}</div><div class="l">Avg Loss</div></div>
+                </div>
+
+                ${section('Throughput', ['Date', 'Circuit', 'Source', 'Down Mbps', 'Up Mbps', 'Status'], rows(speed, [
+                    t => dt(t.created_at), t => esc(t.circuit_label || '—'),
+                    t => t.test_type === 'iperf' ? 'iPerf3' : 'Speed test',
+                    t => fmt(t.metrics.download_mbps), t => fmt(t.metrics.upload_mbps), statusCell
+                ]))}
+
+                ${section('Latency & Quality', ['Date', 'Circuit', 'Test', 'Avg RTT', 'Loss', 'Jitter / Hops', 'Status'], rows(quality, [
+                    t => dt(t.created_at), t => esc(t.circuit_label || '—'),
+                    t => t.test_type === 'mtr' ? 'MTR' : 'Continuous ping',
+                    t => fmt(t.metrics.rtt_avg, ' ms'),
+                    t => fmt(t.metrics.loss_percent != null ? t.metrics.loss_percent : t.metrics.worst_loss, '%'),
+                    t => t.test_type === 'mtr' ? fmt(t.metrics.hops, ' hops') : fmt(t.metrics.jitter_ms, ' ms'),
+                    statusCell
+                ]))}
+
+                ${section('Path & Connectivity', ['Date', 'Circuit', 'Test', 'Result', 'Status'], rows(path, [
+                    t => dt(t.created_at), t => esc(t.circuit_label || '—'), t => esc(t.test_type),
+                    t => {
+                        const m = t.metrics;
+                        if (t.test_type === 'traceroute') return `${fmt(m.hops, ' hops')}${m.rtt_avg != null ? ', ' + m.rtt_avg + ' ms' : ''}`;
+                        if (t.test_type === 'dns') return fmt(m.response_ms, ' ms');
+                        if (t.test_type === 'tcp_check') return m.open === true ? 'open' + (m.connect_ms != null ? ', ' + m.connect_ms + ' ms' : '') : (m.open === false ? 'closed' : '—');
+                        if (t.test_type === 'ssl_check') return m.days_until_expiry != null ? m.days_until_expiry + ' days to expiry' : (m.valid != null ? (m.valid ? 'valid' : 'invalid') : '—');
+                        return '—';
+                    },
+                    statusCell
+                ]))}
+
+                ${!d.tests.length ? '<p class="note" style="margin-top:20px;">No tests recorded in this period.</p>' : ''}
+
+                <div class="foot">
+                    <span>KahLuna Pulsar &middot; ${esc(d.node.name)} (${esc(d.node.node_id)})</span>
+                    <span>${esc(d.org.name)} &middot; ${esc(d.period.from)} &rarr; ${esc(d.period.to)}</span>
+                </div>`;
+        }
+
+        async function init() {
+            const from = document.getElementById('from').value, to = document.getElementById('to').value;
+            let url, opts = {};
+            if (KEY) {
+                url = `/api/portal/report?key=${encodeURIComponent(KEY)}&from=${from}&to=${to}`;
+            } else if (ORG) {
+                url = `/api/report/data?org_id=${ORG}&from=${from}&to=${to}`;
+                opts.headers = { 'Authorization': 'Bearer ' + (localStorage.getItem('pulsar_token') || '') };
+            } else {
+                box.innerHTML = '<div class="err-box">Missing org_id or access key.</div>';
+                return;
+            }
+            try {
+                const resp = await fetch(url, opts);
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    box.innerHTML = `<div class="err-box">${esc(err.detail || 'Could not load the report')}${resp.status === 401 && !KEY ? ' — sign in on the dashboard first, then reload this page.' : ''}</div>`;
+                    return;
+                }
+                render(await resp.json());
+            } catch (e) {
+                box.innerHTML = `<div class="err-box">${esc(e.message)}</div>`;
+            }
+        }
+
+        init();
+    })();
+    </script>
+</body>
+</html>
