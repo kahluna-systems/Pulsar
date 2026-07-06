@@ -20,7 +20,9 @@ Distributed network diagnostics node: FastAPI backend + single-file vanilla-JS d
 | `node/auth.py` | JWT HS256 (secret = config `secret_key`), roles `viewer < engineer < admin`. **`require_role()` is a no-op when `require_auth` is false** — safe to put on any endpoint. `user_from_token()` = SSE query-param auth. |
 | `node/runners/*` | Subprocess wrappers per tool. Capability-first: only prepend `sudo` if `shutil.which("sudo")` (containers have none). |
 | `node/static/index.html` | The **entire dashboard** (~2300 lines: CSS+HTML+JS). Sidenav shell, auth overlay (monkeypatched `fetch` injects Bearer token; 401 → re-run auth check), one panel per tool, attribution bar, Customers master-detail, admin panel. |
-| `node/static/speedtest.html` | Public customer speed-test page (token-tracked). Deliberately unbranded (white-label candidate). |
+| `node/static/speedtest.html` | Public customer speed-test page (token-tracked). Deliberately unbranded (white-label candidate). Access-link keys also work as its `?token=` (attribution bridge). |
+| `node/static/portal.html` | Customer portal (`/portal?key=`): circuits with one-click tests, scoped history, report link. |
+| `node/static/report.html` | Printable per-org report (`/report?org_id=` staff / `?key=` customer). |
 | `shared/models.py` | Pydantic schemas shared with the future hub. |
 
 ## Auth model
@@ -35,11 +37,11 @@ Distributed network diagnostics node: FastAPI backend + single-file vanilla-JS d
 - "Run tests for:" bar stamps `org_id`/`circuit_id` on **every** test path: `POST /api/tests`, MTR SSE (query params), continuous ping (`_ping_attribution` session map). Circuit selection pre-fills the active panel's target.
 - History filters by org; tokens link to orgs; customer speed tests inherit the token's org.
 
-## Roadmap (agreed order)
+## Roadmap status
 
-1. **Phase 3 — customer access links**: org-scoped *revocable* links → scoped portal (run tests **against own circuits only**, view own history). Explicit platform decision: NO node-local customer logins — identity belongs to platform-core; edge customer access is token-based (see kahluna-docs Deployment Philosophy). Portal should reuse the iPerf3 Remote Client Guide pattern.
-2. **Phase 4 — per-org reports**: professional printable HTML (reuse the `renderResult` formatters), per org/circuit/date-range.
-3. Deferred: f-string 3.12-only syntax portability (`node/main.py` MTR stream area); packet-capture interface dropdown is hardcoded (host networking changed real NIC names).
+- **Phases 1–4 complete**: orgs/circuits registry → attribution → **customer access links** (`access_links` table, `/api/portal/*` key-authed + server-scoped: own circuits only, traceroute|mtr via UDP, 10 tests/10min/key, `/portal` page) → **per-org reports** (`/report` page, print-first; `/api/report/data` staff JWT + `/api/portal/report` link key; `_metric_summary` extracts headline numbers per test type — MTR loss = final-hop loss, floats rounded).
+- Next frontier (not yet scheduled): hub mode (platform-core sync — `TestResult.synced` + `hub_url` config pre-wired; registry expects `service_type: "diagnostic-node"`), per-org portal feature toggles, white-label branding, JWT auto-refresh (60-min expiry logs staff out of report pages too).
+- Deferred small items: f-string 3.12-only syntax portability (`node/main.py` MTR stream area); packet-capture interface dropdown is hardcoded (host networking changed real NIC names).
 
 ## Container & capability model — critical gotchas
 
