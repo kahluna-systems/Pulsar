@@ -31,6 +31,15 @@ Part of the **KahLuna Nexus** suite: Pulsar runs **standalone** as a dedicated p
 - **"Run tests for:"** attribution — every test can be stamped with an organization/circuit; selecting a circuit pre-fills its endpoint as the target
 - Test History filterable by organization; searchable customer master-detail view
 
+### Customer Portal & Access Links
+- Generate **revocable, org-scoped access links** — the customer clicks one URL and lands on their own portal (`/portal`): no account, no install
+- Portal customers run tests **against their own registered circuit endpoints only** (server-enforced allowlist + rate limiting), see their own history, and open their own reports
+- Speed test handoff from the portal attributes results to the organization automatically
+
+### Reports
+- **Printable performance reports** (`/report`) per organization and date range: branded header, throughput / latency & quality / path & connectivity sections, period aggregates (avg/max speeds, RTT, end-to-end loss)
+- Available to staff from the Customers pane and to customers through their access link — print or save as PDF from the browser
+
 ### Customer Testing
 - Generate time-limited, tracked test tokens (linkable to an organization)
 - Customer-facing speed test portal (no software required)
@@ -79,6 +88,8 @@ Requires **Python 3.12+**.
 
 - **Engineer Dashboard**: `http://<host>:8000` (login required once auth is enabled)
 - **Customer Speed Test**: `http://<host>:8000/speedtest` (public)
+- **Customer Portal**: `http://<host>:8000/portal?key=...` (via an access link generated per organization)
+- **Reports**: `http://<host>:8000/report?org_id=...` (staff) or `?key=...` (customer access link)
 - **API docs**: `http://<host>:8000/docs`
 
 ## Configuration
